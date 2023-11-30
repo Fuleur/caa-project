@@ -1,8 +1,10 @@
 use crate::commands::{
-    exit::ExitCommand, help::HelpCommand, ping::PingCommand, set::SetCommand, Command, login::LoginCommand, register::RegisterCommand, logout::LogoutCommand,
+    exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
+    ping::PingCommand, register::RegisterCommand, set::SetCommand, Command,
 };
 use colored::Colorize;
 use lazy_static::lazy_static;
+use opaque_ke::CipherSuite;
 use std::{
     collections::HashMap,
     io::{self, Write},
@@ -35,7 +37,7 @@ fn main() {
     println!("Type {} for the command list", "help".green());
 
     let mut ctx = TSFSContext {
-        endpoint_url: Some("tsfs.infrack.ch".into()),
+        endpoint_url: Some("http://localhost".into()),
         endpoint_port: 1315,
         session_token: Some(".".into()),
         username: Some("Fuler".into()),
@@ -83,4 +85,12 @@ pub struct TSFSContext {
 
     session_token: Option<String>,
     username: Option<String>,
+}
+
+pub struct DefaultCS;
+impl CipherSuite for DefaultCS {
+    type OprfCs = opaque_ke::Ristretto255;
+    type KeGroup = opaque_ke::Ristretto255;
+    type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh;
+    type Ksf = opaque_ke::ksf::Identity;
 }

@@ -162,6 +162,7 @@ dependencies = [
  "colored",
  "opaque-ke",
  "rand",
+ "serde",
  "tokio",
 ]
 

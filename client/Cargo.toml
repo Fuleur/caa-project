@@ -10,3 +10,7 @@ clap = { version = "4.4.10", features = ["derive"] }
 colored = "2.0.4"
 lazy_static = "1.4.0"
 shell-words = "1.1.0"
+opaque-ke = { version = "2.0.0", features = ["serde"]}
+serde = "1.0.193"
+reqwest = { version = "0.11.22", features = ["json", "blocking"] }
+rand = "0.8.5"

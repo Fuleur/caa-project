@@ -15,7 +15,7 @@ pub struct PingArgs {
 pub struct PingCommand;
 
 impl Command for PingCommand {
-    fn execute(&self, args: &Vec<String>, ctx: &mut TSFSContext) {
+    fn execute(&self, args: &Vec<String>, _ctx: &mut TSFSContext) {
         match PingArgs::try_parse_from(args) {
             Ok(args) => {
                 println!("{}", args.message);

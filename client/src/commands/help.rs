@@ -7,7 +7,7 @@ use super::Command;
 pub struct HelpCommand;
 
 impl Command for HelpCommand {
-    fn execute(&self, _args: &Vec<String>, ctx: &mut TSFSContext) {
+    fn execute(&self, _args: &Vec<String>, _ctx: &mut TSFSContext) {
         println!("Command list:");
 
         for (name, cmd) in COMMANDS.iter() {
