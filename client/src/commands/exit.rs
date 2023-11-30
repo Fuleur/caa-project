@@ -1,9 +1,11 @@
+use crate::TSFSContext;
+
 use super::Command;
 
 pub struct ExitCommand;
 
 impl Command for ExitCommand {
-    fn execute(&self, _args: &Vec<String>) {
+    fn execute(&self, _args: &Vec<String>, ctx: &mut TSFSContext) {
         println!("Goodbye, world!");
 
         std::process::exit(0);
