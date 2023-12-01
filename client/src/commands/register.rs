@@ -1,6 +1,12 @@
+use std::io::{self, Read, Write};
+
 use colored::Colorize;
-use opaque_ke::{ClientRegistration, RegistrationRequest, RegistrationResponse, ClientRegistrationFinishParameters};
+use opaque_ke::{
+    ClientRegistration, ClientRegistrationFinishParameters, Identifiers, RegistrationRequest,
+    RegistrationResponse, RegistrationUpload,
+};
 use rand::rngs::OsRng;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::{log, DefaultCS, TSFSContext};
@@ -15,6 +21,12 @@ struct RegisterRequest {
     registration_request: RegistrationRequest<DefaultCS>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RegisterFinishRequest {
+    username: String,
+    registration_upload: RegistrationUpload<DefaultCS>,
+}
+
 impl Command for RegisterCommand {
     fn execute(&self, _args: &Vec<String>, ctx: &mut TSFSContext) {
         if ctx.session_token.is_some() {
@@ -26,40 +38,104 @@ impl Command for RegisterCommand {
         }
 
         if let Some(endpoint_url) = &ctx.endpoint_url {
+            // Username input
+            print!("Username: ");
+            io::stdout().flush().unwrap();
+
+            let mut username = String::new();
+            io::stdin().read_line(&mut username).unwrap();
+            username = username.trim().to_string();
+
+            // Password input
+            let password = rpassword::prompt_password("Password: ").unwrap();
+
+            // Create ClientRegistration
             let mut client_rng = OsRng;
             let client_registration_start_result =
                 ClientRegistration::<DefaultCS>::start(&mut client_rng, b"password").unwrap();
 
             let client = reqwest::blocking::Client::new();
+
+            // Send RegistrationRequest to the Server
             let res = client
                 .post(format!(
                     "{}:{}/auth/register/start",
                     endpoint_url, ctx.endpoint_port
                 ))
                 .json(&RegisterRequest {
-                    username: "test".into(),
+                    username: username.clone(),
                     registration_request: client_registration_start_result.message,
                 })
-                .send()
-                .unwrap();
+                .send();
 
-            let client_registration_finish_result = client_registration_start_result.state.finish(
-                &mut client_rng,
-                b"password",
-                res.json::<RegistrationResponse<DefaultCS>>().unwrap(),
-                ClientRegistrationFinishParameters::default(),
-            ).unwrap();
+            if res.is_err() {
+                log::error(&format!("{}", res.err().unwrap()));
+                return;
+            }
 
-            let _res = client
-                .post(format!(
-                    "{}:{}/auth/register/finish",
-                    endpoint_url, ctx.endpoint_port
-                ))
-                .json(&client_registration_finish_result.message)
-                .send()
-                .unwrap();
+            let res = res.unwrap();
 
-            log::debug("Registration complete ! You can now login.");
+            match res.error_for_status() {
+                Ok(res) => {
+                    // Create ClientRegistrationFinishResult
+                    let client_registration_finish_result = client_registration_start_result
+                        .state
+                        .finish(
+                            &mut client_rng,
+                            password.as_bytes(),
+                            // Get RegistrationResponse from Server
+                            res.json::<RegistrationResponse<DefaultCS>>().unwrap(),
+                            ClientRegistrationFinishParameters::new(
+                                Identifiers {
+                                    client: Some(username.as_bytes()),
+                                    server: Some(b"TSFSServer"),
+                                },
+                                None,
+                            ),
+                        )
+                        .unwrap();
+
+                    // Send RegistrationUpload to the Server
+                    match client
+                        .post(format!(
+                            "{}:{}/auth/register/finish",
+                            endpoint_url, ctx.endpoint_port
+                        ))
+                        .json(&RegisterFinishRequest {
+                            username,
+                            registration_upload: client_registration_finish_result.message,
+                        })
+                        .send()
+                    {
+                        Ok(res) => match res.error_for_status() {
+                            Ok(_) => {
+                                log::info("Registration complete ! You can now login.");
+                            }
+
+                            Err(e) => {
+                                log::error(&format!(
+                                    "Error on register: {}",
+                                    e.status().unwrap().to_string().red()
+                                ));
+                            }
+                        },
+
+                        Err(e) => {
+                            log::error(&format!("Error on register: {}", e.to_string().red()));
+                        }
+                    };
+                }
+
+                Err(e) => {
+                    let status = e.status().unwrap();
+
+                    if status == StatusCode::CONFLICT {
+                        log::error("An account is already registered with this username :/");
+                    } else {
+                        log::error(&format!("Error on register: {}", e.to_string().red()));
+                    }
+                }
+            }
         } else {
             log::error(&format!("Missing {} in context", "endpoint_url".green()));
         }

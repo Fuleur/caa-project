@@ -7,7 +7,6 @@ pub struct ExitCommand;
 impl Command for ExitCommand {
     fn execute(&self, _args: &Vec<String>, _ctx: &mut TSFSContext) {
         println!("Goodbye, world!");
-
         std::process::exit(0);
     }
 

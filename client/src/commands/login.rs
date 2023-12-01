@@ -1,7 +1,10 @@
+use std::io::{self, Write};
+
+use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
 use opaque_ke::{
     ClientLogin, ClientLoginFinishParameters, CredentialFinalization, CredentialRequest,
-    CredentialResponse,
+    CredentialResponse, Identifiers,
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -32,46 +35,83 @@ impl Command for LoginCommand {
         }
 
         if let Some(endpoint_url) = &ctx.endpoint_url {
+            // Username input
+            print!("Username: ");
+            io::stdout().flush().unwrap();
+
+            let mut username = String::new();
+            io::stdin().read_line(&mut username).unwrap();
+            username = username.trim().to_string();
+
+            // Password input
+            let password = rpassword::prompt_password("Password: ").unwrap();
+
+            // Create ClientLoginStart
             let mut client_rng = OsRng;
             let client_login_start_result =
                 ClientLogin::<DefaultCS>::start(&mut client_rng, b"password").unwrap();
 
             let client = reqwest::blocking::Client::new();
+
+            // Send CredentialRequest to the Server
             let res = client
                 .post(format!(
                     "{}:{}/auth/login/start",
                     endpoint_url, ctx.endpoint_port
                 ))
                 .json(&LoginRequest {
-                    username: "test".into(),
+                    username: username.clone(),
                     credential_request: client_login_start_result.message,
                 })
-                .send()
-                .unwrap();
+                .send();
+
+            if res.is_err() {
+                log::error(&format!("{}", res.err().unwrap()));
+                return;
+            }
+
+            let res = res.unwrap();
 
             match res.error_for_status() {
                 Ok(res) => {
+                    // Create ClientLoginFinishResult
                     match client_login_start_result.state.finish(
-                        b"password",
+                        password.as_bytes(),
+                        // Get CredentialResponse from Server
                         res.json::<CredentialResponse<DefaultCS>>().unwrap(),
-                        ClientLoginFinishParameters::default(),
+                        ClientLoginFinishParameters::new(
+                            None,
+                            Identifiers {
+                                client: Some(username.as_bytes()),
+                                server: Some(b"TSFSServer"),
+                            },
+                            None,
+                        ),
                     ) {
                         Ok(client_login_finish_result) => {
+                            // Send CredentialFinalization to the Server
                             let _res = client
                                 .post(format!(
                                     "{}:{}/auth/login/finish",
                                     endpoint_url, ctx.endpoint_port
                                 ))
                                 .json(&LoginRequestFinish {
-                                    username: "test".into(),
+                                    username: username.clone(),
                                     credential_finalization: client_login_finish_result.message,
                                 })
                                 .send()
                                 .unwrap();
 
-                            log::debug(&format!(
-                                "Login complete ! Token: {:?}",
-                                client_login_finish_result.session_key
+                            // Here is our Session Key that will be used as Session Token
+                            let b64_token = general_purpose::STANDARD_NO_PAD
+                                .encode(client_login_finish_result.session_key);
+
+                            ctx.username = Some(username);
+                            ctx.session_token = Some(b64_token.clone());
+                            log::info(&format!(
+                                "Login {} ! Token: {}",
+                                "OK".bright_green(),
+                                b64_token
                             ));
                         }
 

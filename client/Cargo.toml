@@ -14,3 +14,6 @@ opaque-ke = { version = "2.0.0", features = ["serde"]}
 serde = "1.0.193"
 reqwest = { version = "0.11.22", features = ["json", "blocking"] }
 rand = "0.8.5"
+rpassword = "7.3.1"
+base64 = "0.21.5"
+confy = "0.5.1"

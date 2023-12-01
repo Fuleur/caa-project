@@ -5,6 +5,7 @@ use crate::commands::{
 use colored::Colorize;
 use lazy_static::lazy_static;
 use opaque_ke::CipherSuite;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{self, Write},
@@ -36,11 +37,15 @@ fn main() {
     );
     println!("Type {} for the command list", "help".green());
 
+    // Load config file
+    let cfg = confy::load::<Config>("tsfs_cli", "settings").unwrap();
+
+    // Construct Context from config
     let mut ctx = TSFSContext {
-        endpoint_url: Some("http://localhost".into()),
-        endpoint_port: 1315,
-        session_token: Some(".".into()),
-        username: Some("Fuler".into()),
+        endpoint_url: cfg.endpoint_url,
+        endpoint_port: cfg.endpoint_port,
+        session_token: None,
+        username: None,
     };
 
     if ctx.endpoint_url.is_none() {
@@ -58,7 +63,11 @@ fn main() {
                     ctx.endpoint_url.as_ref().unwrap().cyan()
                 )
             } else {
-                "".to_string()
+                if ctx.endpoint_url.is_some() {
+                    format!("{} ", ctx.endpoint_url.as_ref().unwrap().red())
+                } else {
+                    "".to_string()
+                }
             }
         );
         io::stdout().flush().unwrap();
@@ -78,13 +87,27 @@ fn main() {
 /// Context of the TSFS Client
 /// Some data are loaded from config file
 /// Others are altered trough the program execution
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TSFSContext {
     endpoint_url: Option<String>,
     endpoint_port: u32,
-
     session_token: Option<String>,
     username: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Config {
+    endpoint_url: Option<String>,
+    endpoint_port: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            endpoint_url: None,
+            endpoint_port: 1315,
+        }
+    }
 }
 
 pub struct DefaultCS;

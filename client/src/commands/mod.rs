@@ -14,7 +14,7 @@ pub trait Command {
 }
 
 pub fn parse(str: &str) -> Vec<String> {
-    let str = str.replace('\n', "").replace('\r', "");
+    let str = str.trim();
     let args = shell_words::split(&str).unwrap();
 
     args

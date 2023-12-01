@@ -7,8 +7,11 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.7.1", features = ["macros"]}
+base64 = "0.21.5"
 colored = "2.0.4"
+dotenv = "0.15.0"
 opaque-ke = { version = "2.0.0", features = ["serde"]}
 rand = "0.8.5"
+redis = "0.23.3"
 serde = "1.0.193"
 tokio = { version = "1.0", features = ["full"] }
