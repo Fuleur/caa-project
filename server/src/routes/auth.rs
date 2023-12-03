@@ -68,6 +68,7 @@ pub async fn register_start(
 pub struct RegisterFinishRequest {
     username: String,
     registration_upload: RegistrationUpload<DefaultCS>,
+    user_keypair: (Vec<u8>, Vec<u8>)
 }
 
 pub async fn register_finish(
@@ -89,10 +90,26 @@ pub async fn register_finish(
         .get_connection()
         .unwrap();
 
+    // Store user password file
     let _: () = conn
         .set(
             format!("password/{}", register_request.username),
             serialized_password,
+        )
+        .unwrap();
+
+    // Store user keypair
+    let _: () = conn
+        .set(
+            format!("keypair/{}/public", register_request.username),
+            register_request.user_keypair.0,
+        )
+        .unwrap();
+
+    let _: () = conn
+        .set(
+            format!("keypair/{}/private", register_request.username),
+            register_request.user_keypair.1,
         )
         .unwrap();
 
@@ -163,10 +180,15 @@ pub struct LoginRequestFinish {
     credential_finalization: CredentialFinalization<DefaultCS>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LoginRequestResult {
+    keypair: (Vec<u8>, Vec<u8>)
+}
+
 pub async fn login_finish(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Json(login_request): Json<LoginRequestFinish>,
-) -> StatusCode {
+) -> Json<LoginRequestResult> {
     log::debug(&format!(
         "Login finish initiated from {}",
         login_request.username.cyan()
@@ -204,5 +226,23 @@ pub async fn login_finish(
         b64_token
     ));
 
-    StatusCode::OK
+    let mut conn = app_state
+        .read()
+        .unwrap()
+        .redis_client
+        .get_connection()
+        .unwrap();
+
+    // Get the User Keypair from redis
+    let pub_key: Vec<u8> = conn
+        .get(format!("keypair/{}/public", login_request.username))
+        .unwrap();
+
+    let priv_key: Vec<u8> = conn
+        .get(format!("keypair/{}/private", login_request.username))
+        .unwrap();
+
+    Json(LoginRequestResult {
+        keypair: (pub_key, priv_key)
+    })
 }

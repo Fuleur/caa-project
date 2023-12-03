@@ -45,8 +45,10 @@ fn main() {
     let mut ctx = TSFSContext {
         endpoint_url: cfg.endpoint_url,
         endpoint_port: cfg.endpoint_port,
-        session_token: None,
         username: None,
+        session_token: None,
+        private_key: None,
+        public_key: None,
     };
 
     if ctx.endpoint_url.is_none() {
@@ -96,8 +98,10 @@ fn main() {
 pub struct TSFSContext {
     endpoint_url: Option<String>,
     endpoint_port: u32,
-    session_token: Option<String>,
     username: Option<String>,
+    session_token: Option<String>,
+    private_key: Option<Vec<u8>>,
+    public_key: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

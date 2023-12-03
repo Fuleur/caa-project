@@ -1,6 +1,10 @@
 use std::io::{self, Write};
 
 use base64::{engine::general_purpose, Engine as _};
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit},
+    ChaCha20Poly1305, Key, Nonce,
+};
 use colored::Colorize;
 use opaque_ke::{
     ClientLogin, ClientLoginFinishParameters, CredentialFinalization, CredentialRequest,
@@ -25,6 +29,11 @@ pub struct LoginRequest {
 pub struct LoginRequestFinish {
     username: String,
     credential_finalization: CredentialFinalization<DefaultCS>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LoginRequestResult {
+    keypair: (Vec<u8>, Vec<u8>),
 }
 
 impl Command for LoginCommand {
@@ -90,7 +99,7 @@ impl Command for LoginCommand {
                     ) {
                         Ok(client_login_finish_result) => {
                             // Send CredentialFinalization to the Server
-                            let _res = client
+                            let res = client
                                 .post(format!(
                                     "{}:{}/auth/login/finish",
                                     endpoint_url, ctx.endpoint_port
@@ -101,6 +110,32 @@ impl Command for LoginCommand {
                                 })
                                 .send()
                                 .unwrap();
+
+                            let login_result = res.json::<LoginRequestResult>().unwrap();
+                            let user_keypair = login_result.keypair;
+
+                            // Get the Export Key from ClientRegistration
+                            // The Export Key is the password derived key derived by the KSF (in our case Argon2) during the OPAQUE protocol
+                            // This key will be used as Master Key
+                            // See https://docs.rs/opaque-ke/latest/opaque_ke/#export-key for more informations
+                            let export_key = client_login_finish_result.export_key;
+                            log::debug(&format!(
+                                "Export Key: {}",
+                                general_purpose::STANDARD_NO_PAD.encode(export_key)
+                            ));
+
+                            // Decrypt private key
+                            // Need to shrink the 64 bytes Export Key to 32 bytes
+                            let key = Key::from_slice(&export_key[..32]);
+                            let cipher = ChaCha20Poly1305::new(&key);
+                            // Get nonce from ciphertext (first 12 bytes)
+                            let nonce = Nonce::from_slice(&user_keypair.1[..12]);
+                            let ciphertext = &user_keypair.1[12..];
+                            let private_key = cipher.decrypt(nonce, ciphertext).unwrap();
+
+                            // Update Context with keys
+                            ctx.private_key = Some(private_key);
+                            ctx.public_key = Some(user_keypair.0);
 
                             // Here is our Session Key that will be used as Session Token
                             let b64_token = general_purpose::STANDARD_NO_PAD

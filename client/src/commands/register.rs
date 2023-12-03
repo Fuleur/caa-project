@@ -1,5 +1,11 @@
 use std::io::{self, Write};
 
+use argon2::Argon2;
+use base64::{engine::general_purpose, Engine};
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit},
+    ChaCha20Poly1305, Key,
+};
 use colored::Colorize;
 use opaque_ke::{
     ClientRegistration, ClientRegistrationFinishParameters, Identifiers, RegistrationRequest,
@@ -25,6 +31,8 @@ struct RegisterRequest {
 pub struct RegisterFinishRequest {
     username: String,
     registration_upload: RegistrationUpload<DefaultCS>,
+    // (pub_key, priv_key)
+    user_keypair: (Vec<u8>, Vec<u8>),
 }
 
 impl Command for RegisterCommand {
@@ -52,7 +60,8 @@ impl Command for RegisterCommand {
             // Create ClientRegistration
             let mut client_rng = OsRng;
             let client_registration_start_result =
-                ClientRegistration::<DefaultCS>::start(&mut client_rng, password.as_bytes()).unwrap();
+                ClientRegistration::<DefaultCS>::start(&mut client_rng, password.as_bytes())
+                    .unwrap();
 
             let client = reqwest::blocking::Client::new();
 
@@ -95,6 +104,40 @@ impl Command for RegisterCommand {
                         )
                         .unwrap();
 
+                    // Get the Export Key from ClientRegistration
+                    // The Export Key is the password derived key derived by the KSF (in our case Argon2) during the OPAQUE protocol
+                    // This key will be used as Master Key
+                    // See https://docs.rs/opaque-ke/latest/opaque_ke/#export-key for more informations
+                    let export_key = client_registration_finish_result.export_key;
+                    log::debug(&format!(
+                        "Export Key: {}",
+                        general_purpose::STANDARD_NO_PAD.encode(export_key)
+                    ));
+
+                    // Generate Keypair for User Keychain
+                    log::info("Generating Kyber Keypair...");
+                    let mut rng = OsRng;
+                    let keypair = pqc_kyber::keypair(&mut rng).unwrap();
+
+                    log::debug(&format!(
+                        "Private key: {}",
+                        general_purpose::STANDARD_NO_PAD.encode(keypair.secret)
+                    ));
+
+                    log::info("Encrypting private key...");
+
+                    // Need to shrink the 64 bytes Export Key to 32 bytes
+                    let key = Key::from_slice(&export_key[..32]);
+                    let cipher = ChaCha20Poly1305::new(&key);
+                    let nonce = ChaCha20Poly1305::generate_nonce(&mut rng);
+
+                    let encrypted_private_key =
+                        cipher.encrypt(&nonce, keypair.secret.as_ref()).unwrap();
+                    // Concat the nonce with the ciphertext
+                    let private_key_cipher = [nonce.to_vec(), encrypted_private_key].concat();
+
+                    log::info("Sending RegistrationFinish to Server...");
+
                     // Send RegistrationUpload to the Server
                     match client
                         .post(format!(
@@ -104,6 +147,7 @@ impl Command for RegisterCommand {
                         .json(&RegisterFinishRequest {
                             username,
                             registration_upload: client_registration_finish_result.message,
+                            user_keypair: (keypair.public.to_vec(), private_key_cipher),
                         })
                         .send()
                     {
