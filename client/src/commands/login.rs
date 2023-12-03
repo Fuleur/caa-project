@@ -49,7 +49,7 @@ impl Command for LoginCommand {
             // Create ClientLoginStart
             let mut client_rng = OsRng;
             let client_login_start_result =
-                ClientLogin::<DefaultCS>::start(&mut client_rng, b"password").unwrap();
+                ClientLogin::<DefaultCS>::start(&mut client_rng, password.as_bytes()).unwrap();
 
             let client = reqwest::blocking::Client::new();
 
@@ -106,13 +106,14 @@ impl Command for LoginCommand {
                             let b64_token = general_purpose::STANDARD_NO_PAD
                                 .encode(client_login_finish_result.session_key);
 
-                            ctx.username = Some(username);
+                            ctx.username = Some(username.clone());
                             ctx.session_token = Some(b64_token.clone());
                             log::info(&format!(
-                                "Login {} ! Token: {}",
+                                "Login {} ! Welcome back {} !",
                                 "OK".bright_green(),
-                                b64_token
+                                username.bright_green()
                             ));
+                            log::debug(&format!("Session Token: {}", b64_token));
                         }
 
                         Err(e) => {

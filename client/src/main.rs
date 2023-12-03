@@ -2,6 +2,7 @@ use crate::commands::{
     exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
     ping::PingCommand, register::RegisterCommand, set::SetCommand, Command,
 };
+use argon2::Argon2;
 use colored::Colorize;
 use lazy_static::lazy_static;
 use opaque_ke::CipherSuite;
@@ -76,10 +77,14 @@ fn main() {
         io::stdin().read_line(&mut line).unwrap();
         let args = commands::parse(&line);
 
-        if let Some(cmd) = COMMANDS.get(args.get(0).unwrap().as_str()) {
-            cmd.execute(&args, &mut ctx);
+        if args.len() > 0 {
+            if let Some(cmd) = COMMANDS.get(args.get(0).unwrap().as_str()) {
+                cmd.execute(&args, &mut ctx);
+            } else {
+                log::error(&format!("Unknown command '{}'", args.get(0).unwrap().red()));
+            }
         } else {
-            log::error(&format!("Unknown command '{}'", args.get(0).unwrap().red()));
+            log::error("No command supplied");
         }
     }
 }
@@ -105,7 +110,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             endpoint_url: None,
-            endpoint_port: 1315,
+            endpoint_port: 8935,
         }
     }
 }
@@ -115,5 +120,5 @@ impl CipherSuite for DefaultCS {
     type OprfCs = opaque_ke::Ristretto255;
     type KeGroup = opaque_ke::Ristretto255;
     type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh;
-    type Ksf = opaque_ke::ksf::Identity;
+    type Ksf = Argon2<'static>;
 }

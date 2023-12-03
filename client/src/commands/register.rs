@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 use colored::Colorize;
 use opaque_ke::{
@@ -52,7 +52,7 @@ impl Command for RegisterCommand {
             // Create ClientRegistration
             let mut client_rng = OsRng;
             let client_registration_start_result =
-                ClientRegistration::<DefaultCS>::start(&mut client_rng, b"password").unwrap();
+                ClientRegistration::<DefaultCS>::start(&mut client_rng, password.as_bytes()).unwrap();
 
             let client = reqwest::blocking::Client::new();
 

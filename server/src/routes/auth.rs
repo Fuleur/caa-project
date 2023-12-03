@@ -1,3 +1,4 @@
+use argon2::Argon2;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
@@ -19,7 +20,7 @@ impl CipherSuite for DefaultCS {
     type OprfCs = opaque_ke::Ristretto255;
     type KeGroup = opaque_ke::Ristretto255;
     type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh;
-    type Ksf = opaque_ke::ksf::Identity;
+    type Ksf = Argon2<'static>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -109,7 +110,10 @@ pub async fn login_start(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Json(login_request): Json<LoginRequest>,
 ) -> Result<Json<CredentialResponse<DefaultCS>>, (StatusCode, String)> {
-    log::debug(&format!("Login start initiated from {}", login_request.username.cyan()));
+    log::debug(&format!(
+        "Login start initiated from {}",
+        login_request.username.cyan()
+    ));
 
     let mut conn = app_state
         .read()
@@ -163,7 +167,10 @@ pub async fn login_finish(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Json(login_request): Json<LoginRequestFinish>,
 ) -> StatusCode {
-    log::debug(&format!("Login finish initiated from {}", login_request.username.cyan()));
+    log::debug(&format!(
+        "Login finish initiated from {}",
+        login_request.username.cyan()
+    ));
 
     // We need to recover the ServerLoginStartResult from the login_start
     let server_login_start_result = app_state
@@ -191,7 +198,11 @@ pub async fn login_finish(
     // Here is our Session Key that will be used as Session Token for this Client session
     let b64_token = general_purpose::STANDARD_NO_PAD.encode(server_login_finish_result.session_key);
 
-    log::debug(&format!("Login successfull for {} ! Token: {}", login_request.username.cyan(), b64_token));
+    log::debug(&format!(
+        "Login successfull for {} ! Token: {}",
+        login_request.username.cyan(),
+        b64_token
+    ));
 
     StatusCode::OK
 }

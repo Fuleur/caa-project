@@ -2,7 +2,7 @@ use axum::{routing::post, Extension, Router};
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
 use dotenv::dotenv;
-use opaque_ke::{ServerLoginStartResult, ServerSetup};
+use opaque_ke::*;
 use rand::rngs::OsRng;
 use routes::auth::{self, DefaultCS};
 use std::{

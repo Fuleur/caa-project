@@ -1,7 +1,6 @@
 use colored::Colorize;
 
-/// Print Debug log message
-/// Only in Debug
+/// Print Debug log message, not printed in release build
 pub fn debug(message: &str) {
     #[cfg(debug_assertions)]
     println!("{} {}", "[Debug]".cyan(), message);
