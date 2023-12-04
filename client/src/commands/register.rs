@@ -119,11 +119,6 @@ impl Command for RegisterCommand {
                     let mut rng = OsRng;
                     let keypair = pqc_kyber::keypair(&mut rng).unwrap();
 
-                    log::debug(&format!(
-                        "Private key: {}",
-                        general_purpose::STANDARD_NO_PAD.encode(keypair.secret)
-                    ));
-
                     log::info("Encrypting private key...");
 
                     // Need to shrink the 64 bytes Export Key to 32 bytes

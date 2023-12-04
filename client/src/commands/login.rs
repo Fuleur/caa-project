@@ -79,89 +79,97 @@ impl Command for LoginCommand {
                 return;
             }
 
-            let res = res.unwrap();
-
-            match res.error_for_status() {
-                Ok(res) => {
-                    // Create ClientLoginFinishResult
-                    match client_login_start_result.state.finish(
-                        password.as_bytes(),
-                        // Get CredentialResponse from Server
-                        res.json::<CredentialResponse<DefaultCS>>().unwrap(),
-                        ClientLoginFinishParameters::new(
-                            None,
-                            Identifiers {
-                                client: Some(username.as_bytes()),
-                                server: Some(b"TSFSServer"),
-                            },
-                            None,
-                        ),
-                    ) {
-                        Ok(client_login_finish_result) => {
-                            // Send CredentialFinalization to the Server
-                            let res = client
-                                .post(format!(
-                                    "{}:{}/auth/login/finish",
-                                    endpoint_url, ctx.endpoint_port
-                                ))
-                                .json(&LoginRequestFinish {
-                                    username: username.clone(),
-                                    credential_finalization: client_login_finish_result.message,
-                                })
-                                .send()
-                                .unwrap();
-
-                            let login_result = res.json::<LoginRequestResult>().unwrap();
-                            let user_keypair = login_result.keypair;
-
-                            // Get the Export Key from ClientRegistration
-                            // The Export Key is the password derived key derived by the KSF (in our case Argon2) during the OPAQUE protocol
-                            // This key will be used as Master Key
-                            // See https://docs.rs/opaque-ke/latest/opaque_ke/#export-key for more informations
-                            let export_key = client_login_finish_result.export_key;
-                            log::debug(&format!(
-                                "Export Key: {}",
-                                general_purpose::STANDARD_NO_PAD.encode(export_key)
-                            ));
-
-                            // Decrypt private key
-                            // Need to shrink the 64 bytes Export Key to 32 bytes
-                            let key = Key::from_slice(&export_key[..32]);
-                            let cipher = ChaCha20Poly1305::new(&key);
-                            // Get nonce from ciphertext (first 12 bytes)
-                            let nonce = Nonce::from_slice(&user_keypair.1[..12]);
-                            let ciphertext = &user_keypair.1[12..];
-                            let private_key = cipher.decrypt(nonce, ciphertext).unwrap();
-
-                            // Update Context with keys
-                            ctx.private_key = Some(private_key);
-                            ctx.public_key = Some(user_keypair.0);
-
-                            // Here is our Session Key that will be used as Session Token
-                            let b64_token = general_purpose::STANDARD_NO_PAD
-                                .encode(client_login_finish_result.session_key);
-
-                            ctx.username = Some(username.clone());
-                            ctx.session_token = Some(b64_token.clone());
-                            log::info(&format!(
-                                "Login {} ! Welcome back {} !",
-                                "OK".bright_green(),
-                                username.bright_green()
-                            ));
-                            log::debug(&format!("Session Token: {}", b64_token));
-                        }
-
-                        Err(e) => {
-                            log::error(&format!("{}", e));
-                        }
-                    }
-                }
-
+            let res = match res.unwrap().error_for_status() {
+                Ok(res) => res,
                 Err(e) => {
                     log::error(&format!(
                         "Error on login: {}",
                         e.status().unwrap().to_string().red()
                     ));
+
+                    return;
+                }
+            };
+
+            // Create ClientLoginFinishResult
+            match client_login_start_result.state.finish(
+                password.as_bytes(),
+                // Get CredentialResponse from Server
+                res.json::<CredentialResponse<DefaultCS>>().unwrap(),
+                ClientLoginFinishParameters::new(
+                    None,
+                    Identifiers {
+                        client: Some(username.as_bytes()),
+                        server: Some(b"TSFSServer"),
+                    },
+                    None,
+                ),
+            ) {
+                Ok(client_login_finish_result) => {
+                    // Send CredentialFinalization to the Server
+                    let res = client
+                        .post(format!(
+                            "{}:{}/auth/login/finish",
+                            endpoint_url, ctx.endpoint_port
+                        ))
+                        .json(&LoginRequestFinish {
+                            username: username.clone(),
+                            credential_finalization: client_login_finish_result.message,
+                        })
+                        .send()
+                        .unwrap();
+
+                    let login_result = res.json::<LoginRequestResult>().unwrap();
+                    let user_keypair = login_result.keypair;
+
+                    // Get the Export Key from ClientRegistration
+                    // The Export Key is the password derived key derived by the KSF (in our case Argon2) during the OPAQUE protocol
+                    // This key will be used as Master Key
+                    // See https://docs.rs/opaque-ke/latest/opaque_ke/#export-key for more informations
+                    let export_key = client_login_finish_result.export_key;
+                    log::debug(&format!(
+                        "Export Key: {}",
+                        general_purpose::STANDARD_NO_PAD.encode(export_key)
+                    ));
+
+                    // Decrypt private key
+                    // Need to shrink the 64 bytes Export Key to 32 bytes
+                    let key = Key::from_slice(&export_key[..32]);
+                    let cipher = ChaCha20Poly1305::new(&key);
+                    // Get nonce from ciphertext (first 12 bytes)
+                    let nonce = Nonce::from_slice(&user_keypair.1[..12]);
+                    let ciphertext = &user_keypair.1[12..];
+                    let private_key = match cipher.decrypt(nonce, ciphertext) {
+                        Ok(k) => k,
+
+                        Err(_) => {
+                            log::error(&format!(
+                                "Error on login: Can't decrypt private key (Wrong Key ?)"
+                            ));
+                            return;
+                        }
+                    };
+
+                    // Update Context with keys
+                    ctx.private_key = Some(private_key);
+                    ctx.public_key = Some(user_keypair.0);
+
+                    // Here is our Session Key that will be used as Session Token
+                    let b64_token = general_purpose::STANDARD_NO_PAD
+                        .encode(client_login_finish_result.session_key);
+
+                    ctx.username = Some(username.clone());
+                    ctx.session_token = Some(b64_token.clone());
+                    log::info(&format!(
+                        "Login {} ! Welcome back {} !",
+                        "OK".bright_green(),
+                        username.bright_green()
+                    ));
+                    log::debug(&format!("Session Token: {}", b64_token));
+                }
+
+                Err(e) => {
+                    log::error(&format!("{}", e));
                 }
             }
         } else {

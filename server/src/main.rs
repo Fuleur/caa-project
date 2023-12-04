@@ -1,4 +1,4 @@
-use axum::{routing::post, Extension, Router};
+use axum::{routing::{post, get}, Extension, Router};
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
 use dotenv::dotenv;
@@ -66,6 +66,7 @@ async fn main() {
         .route("/auth/register/finish", post(auth::register_finish))
         .route("/auth/login/start", post(auth::login_start))
         .route("/auth/login/finish", post(auth::login_finish))
+        .route("/auth/session", get(auth::check_session))
         .layer(Extension(server_setup_state))
         .with_state(app_state);
 

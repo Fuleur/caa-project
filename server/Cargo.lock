@@ -197,8 +197,10 @@ dependencies = [
  "dotenv",
  "opaque-ke",
  "rand",
- "redis",
+ "redis 0.23.3",
+ "redis-derive",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -907,6 +909,21 @@ dependencies = [
 
 [[package]]
 name = "redis"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "152f3863635cbb76b73bc247845781098302c6c9ad2060e1a9a7de56840346b6"
+dependencies = [
+ "async-trait",
+ "combine",
+ "itoa",
+ "percent-encoding",
+ "ryu",
+ "sha1",
+ "url",
+]
+
+[[package]]
+name = "redis"
 version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f49cdc0bb3f412bf8e7d1bd90fe1d9eb10bc5c399ba90973c14662a27b3f8ba"
@@ -918,6 +935,18 @@ dependencies = [
  "sha1_smol",
  "socket2 0.4.10",
  "url",
+]
+
+[[package]]
+name = "redis-derive"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd54aa405add884ec36f7eb40d6d09d5be4ea6b69655492dd5764bc7d698ef12"
+dependencies = [
+ "heck",
+ "quote",
+ "redis 0.21.7",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -1030,6 +1059,15 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "sha1"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1da05c97445caa12d05e848c4a4fcbbea29e748ac28f7e80e9b010392063770"
+dependencies = [
+ "sha1_smol",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 use argon2::Argon2;
+use axum::http::HeaderMap;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
@@ -9,8 +10,12 @@ use opaque_ke::{
 };
 use rand::rngs::OsRng;
 use redis::Commands;
+use redis_derive::{FromRedisValue, ToRedisArgs};
 use serde::{Deserialize, Serialize};
+use std::fmt::format;
+use std::ops::Add;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::log;
 use crate::AppState;
@@ -68,7 +73,7 @@ pub async fn register_start(
 pub struct RegisterFinishRequest {
     username: String,
     registration_upload: RegistrationUpload<DefaultCS>,
-    user_keypair: (Vec<u8>, Vec<u8>)
+    user_keypair: (Vec<u8>, Vec<u8>),
 }
 
 pub async fn register_finish(
@@ -182,7 +187,7 @@ pub struct LoginRequestFinish {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LoginRequestResult {
-    keypair: (Vec<u8>, Vec<u8>)
+    keypair: (Vec<u8>, Vec<u8>),
 }
 
 pub async fn login_finish(
@@ -233,6 +238,18 @@ pub async fn login_finish(
         .get_connection()
         .unwrap();
 
+    let session = Session {
+        token: b64_token.clone(),
+        user: login_request.username.clone(),
+        expiration_date: SystemTime::now()
+            .add(Duration::from_secs(5))
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+    };
+
+    let _: () = conn.set(format!("session/{}", b64_token), serde_json::to_string(&session).unwrap()).unwrap();
+
     // Get the User Keypair from redis
     let pub_key: Vec<u8> = conn
         .get(format!("keypair/{}/public", login_request.username))
@@ -243,6 +260,39 @@ pub async fn login_finish(
         .unwrap();
 
     Json(LoginRequestResult {
-        keypair: (pub_key, priv_key)
+        keypair: (pub_key, priv_key),
     })
+}
+
+pub async fn check_session(
+    headers: HeaderMap,
+    State(app_state): State<Arc<RwLock<AppState>>>,
+) -> Result<Json<Session>, StatusCode> {
+    if !headers.contains_key("Authorization") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let token = headers.get("Authorization").unwrap().to_str().unwrap();
+
+    let mut conn = app_state
+        .read()
+        .unwrap()
+        .redis_client
+        .get_connection()
+        .unwrap();
+
+    let session: String = conn
+        .get(format!("session/{}", token))
+        .unwrap();
+
+    let session = serde_json::from_str(&session).unwrap();
+
+    Ok(Json(session))
+}
+
+#[derive(ToRedisArgs, FromRedisValue, Serialize, Deserialize, Debug)]
+pub struct Session {
+    token: String,
+    user: String,
+    expiration_date: u64,
 }

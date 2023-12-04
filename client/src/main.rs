@@ -1,6 +1,6 @@
 use crate::commands::{
     exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
-    ping::PingCommand, register::RegisterCommand, set::SetCommand, Command,
+    ping::PingCommand, register::RegisterCommand, set::SetCommand, Command, session::SessionCommand,
 };
 use argon2::Argon2;
 use colored::Colorize;
@@ -26,6 +26,7 @@ lazy_static! {
         map.insert("login", Box::new(LoginCommand));
         map.insert("logout", Box::new(LogoutCommand));
         map.insert("register", Box::new(RegisterCommand));
+        map.insert("session", Box::new(SessionCommand));
 
         map
     };

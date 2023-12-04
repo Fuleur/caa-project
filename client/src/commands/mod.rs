@@ -6,6 +6,7 @@ pub mod login;
 pub mod logout;
 pub mod ping;
 pub mod register;
+pub mod session;
 pub mod set;
 
 pub trait Command {
@@ -17,7 +18,7 @@ pub fn parse(str: &str) -> Vec<String> {
     let str = str.trim();
     match shell_words::split(&str) {
         Ok(args) => args,
-        
-        Err(_) => vec![]
+
+        Err(_) => vec![],
     }
 }
