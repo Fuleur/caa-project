@@ -1,40 +1,11 @@
-use std::io::{self, Write};
-
-use base64::{engine::general_purpose, Engine as _};
-use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit},
-    ChaCha20Poly1305, Key, Nonce,
-};
 use colored::Colorize;
-use opaque_ke::{
-    ClientLogin, ClientLoginFinishParameters, CredentialFinalization, CredentialRequest,
-    CredentialResponse, Identifiers,
-};
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
-use crate::{log, DefaultCS, TSFSContext};
+use crate::{log, TSFSContext};
 
 use super::Command;
 
 pub struct SessionCommand;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LoginRequest {
-    username: String,
-    credential_request: CredentialRequest<DefaultCS>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LoginRequestFinish {
-    username: String,
-    credential_finalization: CredentialFinalization<DefaultCS>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LoginRequestResult {
-    keypair: (Vec<u8>, Vec<u8>),
-}
 
 impl Command for SessionCommand {
     fn execute(&self, _args: &Vec<String>, ctx: &mut TSFSContext) {
@@ -51,7 +22,7 @@ impl Command for SessionCommand {
                     "{}:{}/auth/session",
                     endpoint_url, ctx.endpoint_port
                 ))
-                .header("Authorization", ctx.session_token.as_ref().unwrap())
+                .header("Authorization", format!("Bearer {}", ctx.session_token.as_ref().unwrap()))
                 .send();
 
             if res.is_err() {
@@ -63,9 +34,12 @@ impl Command for SessionCommand {
                 Ok(res) => res,
                 Err(e) => {
                     log::error(&format!(
-                        "Error on login: {}",
+                        "Invalid session: {}",
                         e.status().unwrap().to_string().red()
                     ));
+
+                    // Server cannot validate session, unset current session token
+                    ctx.session_token = None;
 
                     return;
                 }

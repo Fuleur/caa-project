@@ -1,6 +1,5 @@
 use std::io::{self, Write};
 
-use argon2::Argon2;
 use base64::{engine::general_purpose, Engine};
 use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit},

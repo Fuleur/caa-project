@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use base64::{engine::general_purpose, Engine as _};
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit},
+    aead::{Aead, KeyInit},
     ChaCha20Poly1305, Key, Nonce,
 };
 use colored::Colorize;
