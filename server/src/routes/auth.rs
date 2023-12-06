@@ -35,6 +35,7 @@ pub struct RegisterRequest {
     registration_request: RegistrationRequest<DefaultCS>,
 }
 
+/// OPAQUE Register Start
 pub async fn register_start(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
@@ -77,6 +78,7 @@ pub struct RegisterFinishRequest {
     user_keypair: (Vec<u8>, Vec<u8>),
 }
 
+/// OPAQUE Register Finish
 pub async fn register_finish(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Json(register_request): Json<RegisterFinishRequest>,
@@ -128,6 +130,7 @@ pub struct LoginRequest {
     credential_request: CredentialRequest<DefaultCS>,
 }
 
+/// OPAQUE Login Start
 pub async fn login_start(
     Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
     State(app_state): State<Arc<RwLock<AppState>>>,
@@ -191,6 +194,7 @@ pub struct LoginRequestResult {
     keypair: (Vec<u8>, Vec<u8>),
 }
 
+/// OPAQUE Login Finish
 pub async fn login_finish(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Json(login_request): Json<LoginRequestFinish>,
@@ -270,10 +274,28 @@ pub async fn login_finish(
     })
 }
 
+/// Return the current user Session data (testing purpose)
 pub async fn check_session(
     Extension(user_session): Extension<Session>,
 ) -> Result<Json<Session>, StatusCode> {
     Ok(Json(user_session))
+}
+
+/// Revoke the current user Session
+pub async fn revoke(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<Arc<RwLock<AppState>>>,
+) -> StatusCode {
+    let mut conn = app_state
+        .read()
+        .unwrap()
+        .redis_client
+        .get_connection()
+        .unwrap();
+
+    let _: () = conn.del(format!("session/{}", user_session.token)).unwrap();
+
+    StatusCode::OK
 }
 
 #[derive(ToRedisArgs, FromRedisValue, Serialize, Deserialize, Clone, Debug)]

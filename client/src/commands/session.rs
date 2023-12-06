@@ -15,14 +15,20 @@ impl Command for SessionCommand {
         }
 
         if let Some(endpoint_url) = &ctx.endpoint_url {
-            let client = reqwest::blocking::Client::new();
+            let client = reqwest::blocking::Client::builder()
+                .danger_accept_invalid_certs(ctx.accept_invalid_cert)
+                .build()
+                .unwrap();
 
             let res = client
                 .get(format!(
                     "{}:{}/auth/session",
                     endpoint_url, ctx.endpoint_port
                 ))
-                .header("Authorization", format!("Bearer {}", ctx.session_token.as_ref().unwrap()))
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", ctx.session_token.as_ref().unwrap()),
+                )
                 .send();
 
             if res.is_err() {

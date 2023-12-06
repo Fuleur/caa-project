@@ -50,6 +50,7 @@ fn main() {
         session_token: None,
         private_key: None,
         public_key: None,
+        accept_invalid_cert: cfg.accept_invalid_cert,
     };
 
     if ctx.endpoint_url.is_none() {
@@ -103,12 +104,14 @@ pub struct TSFSContext {
     session_token: Option<String>,
     private_key: Option<Vec<u8>>,
     public_key: Option<Vec<u8>>,
+    accept_invalid_cert: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     endpoint_url: Option<String>,
     endpoint_port: u32,
+    accept_invalid_cert: bool,
 }
 
 impl Default for Config {
@@ -116,6 +119,7 @@ impl Default for Config {
         Self {
             endpoint_url: None,
             endpoint_port: 8935,
+            accept_invalid_cert: false,
         }
     }
 }

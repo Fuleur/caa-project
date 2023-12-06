@@ -19,6 +19,10 @@ struct SetArgs {
     /// Set endpoint_port
     #[arg(short, long)]
     port: Option<u32>,
+
+    /// Set accept_invalid_cert. Use only in dev environnement !
+    #[arg(short, long)]
+    accept_invalid_cert: Option<bool>,
 }
 
 pub struct SetCommand;
@@ -55,12 +59,19 @@ impl Command for SetCommand {
                     }
                 }
 
+                // Set accept_invalid_cert
+                if let Some(accept_invalid_cert) = args.accept_invalid_cert {
+                    ctx.accept_invalid_cert = accept_invalid_cert;
+                    println!("{} updated", "accept_invalid_cert".green());
+                }
+
                 confy::store(
                     "tsfs_cli",
                     "settings",
                     Config {
                         endpoint_url: ctx.endpoint_url.clone(),
                         endpoint_port: ctx.endpoint_port,
+                        accept_invalid_cert: ctx.accept_invalid_cert,
                     },
                 )
                 .unwrap();

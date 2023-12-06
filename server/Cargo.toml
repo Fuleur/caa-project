@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 argon2 = "0.4.1"
 axum = { version = "0.7.1", features = ["macros"]}
+axum-server = { git = "https://github.com/programatik29/axum-server.git", features = ["tls-rustls"] }
+hyper = { version = "1.0.1", features = ["full"] }
 base64 = "0.21.5"
 colored = "2.0.4"
 dotenv = "0.15.0"
@@ -18,4 +20,6 @@ redis-derive = "0.1.7"
 serde = "1.0.193"
 serde_json = "1.0.108"
 tokio = { version = "1.0", features = ["full"] }
-tower = "0.4.13"
+tower = "0.4"
+rustls = "0.22.0"
+rcgen = "0.11.3"

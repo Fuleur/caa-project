@@ -62,8 +62,11 @@ impl Command for RegisterCommand {
                 ClientRegistration::<DefaultCS>::start(&mut client_rng, password.as_bytes())
                     .unwrap();
 
-            let client = reqwest::blocking::Client::new();
-
+            let client = reqwest::blocking::Client::builder()
+                .danger_accept_invalid_certs(ctx.accept_invalid_cert)
+                .build()
+                .unwrap();
+            
             // Send RegistrationRequest to the Server
             let res = client
                 .post(format!(

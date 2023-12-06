@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
     Extension, Router,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
 use dotenv::dotenv;
@@ -16,6 +17,11 @@ use routes::auth::{self, DefaultCS, Session};
 use std::{
     collections::HashMap,
     env,
+    fs::{self, File},
+    io::Write,
+    net::SocketAddr,
+    path::PathBuf,
+    str::FromStr,
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -39,6 +45,32 @@ async fn main() {
         return;
     }
 
+    // If --self-signed arg is passed, generate new self signed certificates for HTTPS
+    // This certificate is ONLY for local development as this app only serve HTTPS
+    if env::args().find(|a| a == "--self-signed").is_some() {
+        log::warning("Generating new self-signed certificate. Use only for development !\n");
+        let cert = rcgen::generate_simple_self_signed(vec![]).unwrap();
+
+        fs::create_dir_all(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/")).unwrap();
+
+        // Write Certificate file
+        let mut cert_file =
+            File::create(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/cert.pem")).unwrap();
+        cert_file
+            .write_all(&cert.serialize_pem().unwrap().as_bytes())
+            .unwrap();
+
+        // Write Private Key file
+        let mut key_file =
+            File::create(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/key.pem")).unwrap();
+        key_file
+            .write_all(&cert.serialize_private_key_pem().as_bytes())
+            .unwrap();
+
+        log::info("Self-signed certificate generated !");
+        return;
+    }
+
     // Loading env variables
     let opaque_server_setup =
         env::var("OPAQUE_SERVER_SETUP").expect("Missing `OPAQUE_SERVER_SETUP` env variable");
@@ -51,11 +83,6 @@ async fn main() {
     // Using a saved ServerSetup is needed to have persistence
     // Otherwise new Keypair and other parameters will be re-generated
     // Or we want to have everytime the same, otherwise goodbye all existing users
-    // To create a fresh ServerSetup:
-    //      let mut rng = OsRng;
-    //      let server_setup = ServerSetup::<DefaultCS>::new(&mut rng);
-    //      let b64_server_setup = general_purpose::STANDARD_NO_PAD.encode(server_setup.serialize());
-    //      println!("{}", b64_server_setup); <--- Put this in OPAQUE_SERVER_SETUP env var
     let server_setup_serialized = general_purpose::STANDARD_NO_PAD
         .decode(opaque_server_setup)
         .unwrap();
@@ -72,6 +99,7 @@ async fn main() {
 
     // Initilize Axum app
     let app = Router::new()
+        .route("/", get(hello))
         .route("/auth/register/start", post(auth::register_start))
         .route("/auth/register/finish", post(auth::register_finish))
         .route("/auth/login/start", post(auth::login_start))
@@ -83,19 +111,38 @@ async fn main() {
                 auth_middleware,
             )),
         )
+        .route(
+            "/auth/revoke",
+            post(auth::revoke).route_layer(axum::middleware::from_fn_with_state(
+                app_state.clone(),
+                auth_middleware,
+            )),
+        )
         .layer(ServiceBuilder::new().layer(Extension(server_setup_state)))
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind(format!("{}:{}", listening_address, port))
-        .await
-        .unwrap();
+    // Start HTTPS Server
+
+    // Set HTTPS config
+    // TODO: Set certificate and key file path in env
+    let config = RustlsConfig::from_pem_file(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/cert.pem"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/key.pem"),
+    )
+    .await
+    .unwrap();
+
+    let addr = SocketAddr::from_str(&format!("{}:{}", listening_address, port)).unwrap();
 
     log::info(&format!(
-        "Server listening on {}:{}",
+        "Server listening on https://{}:{}",
         listening_address, port
     ));
 
-    axum::serve(listener, app).await.unwrap();
+    axum_server::bind_rustls(addr, config)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 
 pub struct AppState {
@@ -149,4 +196,8 @@ async fn auth_middleware(
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+async fn hello() -> &'static str {
+    "hello world"
 }
