@@ -1,6 +1,7 @@
 use crate::commands::{
     exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
-    ping::PingCommand, register::RegisterCommand, set::SetCommand, Command, session::SessionCommand,
+    ping::PingCommand, register::RegisterCommand, session::SessionCommand, set::SetCommand,
+    Command,
 };
 use argon2::Argon2;
 use colored::Colorize;
@@ -40,7 +41,17 @@ fn main() {
     println!("Type {} for the command list", "help".green());
 
     // Load config file
-    let cfg = confy::load::<Config>("tsfs_cli", "settings").unwrap();
+    let cfg = match confy::load::<Config>("tsfs_cli", "settings") {
+        Ok(config) => config,
+        Err(_e) => {
+            // Invalid config file, reset to default
+            log::warning("Invalid config file, reseting to default");
+            let cfg = Config::default();
+            confy::store("tsfs_cli", "settings", &cfg).unwrap();
+
+            cfg
+        }
+    };
 
     // Construct Context from config
     let mut ctx = TSFSContext {

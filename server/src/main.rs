@@ -9,6 +9,8 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
+use deadpool_diesel::{sqlite::Pool, Manager, Runtime};
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use opaque_ke::*;
 use rand::rngs::OsRng;
@@ -27,8 +29,11 @@ use std::{
 };
 use tower::ServiceBuilder;
 
+mod db;
 mod log;
 mod routes;
+
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 
 #[tokio::main]
 async fn main() {
@@ -77,7 +82,7 @@ async fn main() {
     let listening_address =
         env::var("LISTENING_ADDRESS").expect("Missing `LISTENING_ADDRESS` env variable");
     let port = env::var("PORT").expect("Missing `PORT` env variable");
-    let redis_url = env::var("REDIS_URL").expect("Missing `REDIS_URL` env variable");
+    // let db_url = env::var("REDIS_URL").expect("Missing `REDIS_URL` env variable");
 
     // Get the ServerSetup from env
     // Using a saved ServerSetup is needed to have persistence
@@ -92,9 +97,22 @@ async fn main() {
         ServerSetup::<DefaultCS>::deserialize(&server_setup_serialized).unwrap();
     let server_setup_state = Arc::new(server_setup);
 
+    // Init Database
+
+    let manager = Manager::new("./db/db.sqlite", Runtime::Tokio1);
+
+    let pool = Pool::builder(manager).build().unwrap();
+
+    // Run diesel migrations
+    let conn = pool.get().await.unwrap();
+    conn.interact(|conn| conn.run_pending_migrations(MIGRATIONS).map(|_| ()))
+        .await
+        .unwrap()
+        .unwrap();
+
     let app_state = Arc::new(RwLock::new(AppState {
         server_login_states: HashMap::<String, ServerLoginStartResult<DefaultCS>>::new(),
-        redis_client: redis::Client::open(redis_url).unwrap(),
+        pool,
     }));
 
     // Initilize Axum app
@@ -124,13 +142,12 @@ async fn main() {
     // Start HTTPS Server
 
     // Set HTTPS config
-    // TODO: Set certificate and key file path in env
     let config = RustlsConfig::from_pem_file(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/cert.pem"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/key.pem"),
+        env::var("CERT_FILE").expect("Missing CERT_FILE env var"),
+        env::var("CERT_KEY_FILE").expect("Missing CERT_KEY_FILE env var"),
     )
     .await
-    .unwrap();
+    .expect("Can't load Certificate Files. You can run with --self-signed to generate self-signed certificate for development");
 
     let addr = SocketAddr::from_str(&format!("{}:{}", listening_address, port)).unwrap();
 
@@ -147,7 +164,7 @@ async fn main() {
 
 pub struct AppState {
     server_login_states: HashMap<String, ServerLoginStartResult<DefaultCS>>,
-    redis_client: redis::Client,
+    pool: Pool,
 }
 
 async fn auth_middleware(

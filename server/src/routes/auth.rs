@@ -2,6 +2,7 @@ use argon2::Argon2;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
+use diesel::prelude::*;
 use opaque_ke::{
     CipherSuite, CredentialFinalization, CredentialRequest, CredentialResponse, Identifiers,
     RegistrationRequest, RegistrationResponse, RegistrationUpload, ServerLogin,
@@ -15,6 +16,8 @@ use std::ops::Add;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::db::schema::users;
+use crate::db::User;
 use crate::log;
 use crate::AppState;
 
@@ -141,18 +144,18 @@ pub async fn login_start(
         login_request.username.cyan()
     ));
 
-    let mut conn = app_state
-        .read()
-        .unwrap()
-        .redis_client
-        .get_connection()
-        .unwrap();
+    let conn = app_state.read().unwrap().pool.get().await.unwrap();
 
-    // Get the Password from redis
-    let password: Vec<u8> = conn
-        .get(format!("password/{}", login_request.username))
+    let user: User = conn
+        .interact(|conn| {
+            users::table
+                .filter(users::username.eq(login_request.username))
+                .first(conn)
+        })
+        .await
+        .unwrap()
         .unwrap();
-    let password = ServerRegistration::<DefaultCS>::deserialize(&password).ok();
+    let password = ServerRegistration::<DefaultCS>::deserialize(&user.password).ok();
 
     let mut rng = OsRng;
     let server_login_start_result = ServerLogin::start(
@@ -160,11 +163,11 @@ pub async fn login_start(
         &server_setup,
         password,
         login_request.credential_request,
-        login_request.username.as_bytes(),
+        user.username.as_bytes(),
         ServerLoginStartParameters {
             context: None,
             identifiers: Identifiers {
-                client: Some(login_request.username.as_bytes()),
+                client: Some(user.username.as_bytes()),
                 server: Some(b"TSFSServer"),
             },
         },
@@ -177,7 +180,7 @@ pub async fn login_start(
         .write()
         .unwrap()
         .server_login_states
-        .insert(login_request.username, server_login_start_result.clone());
+        .insert(user.username, server_login_start_result.clone());
 
     // Send back the CredentialResponse to the Client
     Ok(Json(server_login_start_result.message))

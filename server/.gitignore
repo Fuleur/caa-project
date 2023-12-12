@@ -1,3 +1,4 @@
 target/
 certs/
+db/db.sqlite
 .env
