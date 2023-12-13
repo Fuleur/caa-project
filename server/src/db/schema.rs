@@ -1,24 +1,25 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    sqlar (name) {
-        name -> Nullable<Text>,
-        mode -> Nullable<Integer>,
-        mtime -> Nullable<Integer>,
-        sz -> Nullable<Integer>,
-        data -> Nullable<Binary>,
+    sessions (token) {
+        token -> Text,
+        user -> Text,
+        expiration_date -> BigInt,
     }
 }
 
 diesel::table! {
-    users (id) {
-        id -> Integer,
+    users (username) {
         username -> Text,
         password -> Binary,
+        pub_key -> Binary,
+        priv_key -> Binary,
     }
 }
 
+diesel::joinable!(sessions -> users (user));
+
 diesel::allow_tables_to_appear_in_same_query!(
-    sqlar,
+    sessions,
     users,
 );

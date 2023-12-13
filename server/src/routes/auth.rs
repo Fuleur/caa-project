@@ -9,15 +9,13 @@ use opaque_ke::{
     ServerLoginStartParameters, ServerRegistration, ServerSetup,
 };
 use rand::rngs::OsRng;
-use redis::Commands;
-use redis_derive::{FromRedisValue, ToRedisArgs};
 use serde::{Deserialize, Serialize};
 use std::ops::Add;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::db::schema::users;
-use crate::db::User;
+use crate::db::schema::{sessions, users};
+use crate::db::{Session, User};
 use crate::log;
 use crate::AppState;
 
@@ -40,26 +38,31 @@ pub struct RegisterRequest {
 
 /// OPAQUE Register Start
 pub async fn register_start(
-    State(app_state): State<Arc<RwLock<AppState>>>,
+    State(app_state): State<AppState>,
     Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
     Json(register_request): Json<RegisterRequest>,
 ) -> Result<Json<RegistrationResponse<DefaultCS>>, StatusCode> {
     log::debug("New registration request");
 
-    let mut conn = app_state
-        .read()
-        .unwrap()
-        .redis_client
-        .get_connection()
-        .unwrap();
+    let conn = app_state.pool.get().await.unwrap();
 
     // Check if a user with this username already exists
     // If yes, return a 409 Conflict
-    let res: Result<Vec<u8>, _> = conn.get(format!("password/{}", register_request.username));
-    if let Some(password) = res.ok() {
-        if password.len() > 0 {
-            return Err(StatusCode::CONFLICT);
-        }
+    let res: Result<User, _> = conn
+        .interact({
+            let username = register_request.username.clone();
+
+            |conn| {
+                users::table
+                    .filter(users::username.eq(username))
+                    .first(conn)
+            }
+        })
+        .await
+        .unwrap();
+
+    if res.is_ok() {
+        return Err(StatusCode::CONFLICT);
     }
 
     // Create ServerRegistration
@@ -83,7 +86,7 @@ pub struct RegisterFinishRequest {
 
 /// OPAQUE Register Finish
 pub async fn register_finish(
-    State(app_state): State<Arc<RwLock<AppState>>>,
+    State(app_state): State<AppState>,
     Json(register_request): Json<RegisterFinishRequest>,
 ) -> StatusCode {
     log::debug(&format!("New registration finish request"));
@@ -94,35 +97,24 @@ pub async fn register_finish(
         ServerRegistration::<DefaultCS>::finish(register_request.registration_upload);
     let serialized_password: Vec<u8> = password_file.serialize().to_vec();
 
-    let mut conn = app_state
-        .read()
-        .unwrap()
-        .redis_client
-        .get_connection()
-        .unwrap();
+    let conn = app_state.pool.get().await.unwrap();
 
-    // Store user password file
-    let _: () = conn
-        .set(
-            format!("password/{}", register_request.username),
-            serialized_password,
-        )
-        .unwrap();
+    // Create User and store it in DB
+    let new_user = User {
+        username: register_request.username,
+        password: serialized_password,
+        pub_key: register_request.user_keypair.0,
+        priv_key: register_request.user_keypair.1,
+    };
 
-    // Store user keypair
-    let _: () = conn
-        .set(
-            format!("keypair/{}/public", register_request.username),
-            register_request.user_keypair.0,
-        )
-        .unwrap();
-
-    let _: () = conn
-        .set(
-            format!("keypair/{}/private", register_request.username),
-            register_request.user_keypair.1,
-        )
-        .unwrap();
+    conn.interact(|conn| {
+        diesel::insert_into(users::table)
+            .values(new_user)
+            .execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     StatusCode::OK
 }
@@ -136,7 +128,7 @@ pub struct LoginRequest {
 /// OPAQUE Login Start
 pub async fn login_start(
     Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
-    State(app_state): State<Arc<RwLock<AppState>>>,
+    State(app_state): State<AppState>,
     Json(login_request): Json<LoginRequest>,
 ) -> Result<Json<CredentialResponse<DefaultCS>>, (StatusCode, String)> {
     log::debug(&format!(
@@ -144,18 +136,26 @@ pub async fn login_start(
         login_request.username.cyan()
     ));
 
-    let conn = app_state.read().unwrap().pool.get().await.unwrap();
+    let conn = app_state.pool.get().await.unwrap();
 
-    let user: User = conn
-        .interact(|conn| {
-            users::table
-                .filter(users::username.eq(login_request.username))
-                .first(conn)
+    let user: Result<User, _> = conn
+        .interact({
+            let username = login_request.username.clone();
+
+            |conn| {
+                users::table
+                    .filter(users::username.eq(username))
+                    .first::<User>(conn)
+            }
         })
         .await
-        .unwrap()
         .unwrap();
-    let password = ServerRegistration::<DefaultCS>::deserialize(&user.password).ok();
+
+    let mut password = None;
+
+    if let Ok(user) = user {
+        password = Some(ServerRegistration::<DefaultCS>::deserialize(&user.password).unwrap());
+    }
 
     let mut rng = OsRng;
     let server_login_start_result = ServerLogin::start(
@@ -163,11 +163,11 @@ pub async fn login_start(
         &server_setup,
         password,
         login_request.credential_request,
-        user.username.as_bytes(),
+        login_request.username.as_bytes(),
         ServerLoginStartParameters {
             context: None,
             identifiers: Identifiers {
-                client: Some(user.username.as_bytes()),
+                client: Some(login_request.username.as_bytes()),
                 server: Some(b"TSFSServer"),
             },
         },
@@ -177,10 +177,10 @@ pub async fn login_start(
     // Store the ServerLoginStartResult in a HashMap in a Axum State
     // We'll need to use it later for the login_finish
     app_state
+        .server_login_states
         .write()
         .unwrap()
-        .server_login_states
-        .insert(user.username, server_login_start_result.clone());
+        .insert(login_request.username, server_login_start_result.clone());
 
     // Send back the CredentialResponse to the Client
     Ok(Json(server_login_start_result.message))
@@ -199,7 +199,7 @@ pub struct LoginRequestResult {
 
 /// OPAQUE Login Finish
 pub async fn login_finish(
-    State(app_state): State<Arc<RwLock<AppState>>>,
+    State(app_state): State<AppState>,
     Json(login_request): Json<LoginRequestFinish>,
 ) -> Json<LoginRequestResult> {
     log::debug(&format!(
@@ -209,18 +209,18 @@ pub async fn login_finish(
 
     // We need to recover the ServerLoginStartResult from the login_start
     let server_login_start_result = app_state
+        .server_login_states
         .read()
         .unwrap()
-        .server_login_states
         .get(&login_request.username)
         .unwrap()
         .to_owned();
 
     // We can remove it from the HashMap
     app_state
+        .server_login_states
         .write()
         .unwrap()
-        .server_login_states
         .remove(&login_request.username)
         .unwrap();
 
@@ -239,13 +239,9 @@ pub async fn login_finish(
         b64_token
     ));
 
-    let mut conn = app_state
-        .read()
-        .unwrap()
-        .redis_client
-        .get_connection()
-        .unwrap();
+    let conn = app_state.pool.get().await.unwrap();
 
+    // Create Session and store it in DB
     let session = Session {
         token: b64_token.clone(),
         user: login_request.username.clone(),
@@ -253,27 +249,31 @@ pub async fn login_finish(
             .add(Duration::from_secs(TOKEN_LIFETIME))
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_millis() as u64,
+            .as_millis() as i64,
     };
 
-    let _: () = conn
-        .set(
-            format!("session/{}", b64_token),
-            serde_json::to_string(&session).unwrap(),
-        )
-        .unwrap();
+    conn.interact(|conn| {
+        diesel::insert_into(sessions::table)
+            .values(session)
+            .execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
-    // Get the User Keypair from redis
-    let pub_key: Vec<u8> = conn
-        .get(format!("keypair/{}/public", login_request.username))
-        .unwrap();
-
-    let priv_key: Vec<u8> = conn
-        .get(format!("keypair/{}/private", login_request.username))
+    // Get user public and private key
+    let user = conn
+        .interact(|conn| {
+            users::table
+                .find(login_request.username)
+                .first::<User>(conn)
+        })
+        .await
+        .unwrap()
         .unwrap();
 
     Json(LoginRequestResult {
-        keypair: (pub_key, priv_key),
+        keypair: (user.pub_key, user.priv_key),
     })
 }
 
@@ -287,23 +287,14 @@ pub async fn check_session(
 /// Revoke the current user Session
 pub async fn revoke(
     Extension(user_session): Extension<Session>,
-    State(app_state): State<Arc<RwLock<AppState>>>,
+    State(app_state): State<AppState>,
 ) -> StatusCode {
-    let mut conn = app_state
-        .read()
+    let conn = app_state.pool.get().await.unwrap();
+
+    conn.interact(|conn| diesel::delete(sessions::table.find(user_session.token)).execute(conn))
+        .await
         .unwrap()
-        .redis_client
-        .get_connection()
         .unwrap();
 
-    let _: () = conn.del(format!("session/{}", user_session.token)).unwrap();
-
     StatusCode::OK
-}
-
-#[derive(ToRedisArgs, FromRedisValue, Serialize, Deserialize, Clone, Debug)]
-pub struct Session {
-    pub token: String,
-    pub user: String,
-    pub expiration_date: u64,
 }

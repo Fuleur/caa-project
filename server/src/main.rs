@@ -9,13 +9,14 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
+use db::{schema::sessions, Session};
 use deadpool_diesel::{sqlite::Pool, Manager, Runtime};
+use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use opaque_ke::*;
 use rand::rngs::OsRng;
-use redis::Commands;
-use routes::auth::{self, DefaultCS, Session};
+use routes::auth::{self, DefaultCS};
 use std::{
     collections::HashMap,
     env,
@@ -82,7 +83,7 @@ async fn main() {
     let listening_address =
         env::var("LISTENING_ADDRESS").expect("Missing `LISTENING_ADDRESS` env variable");
     let port = env::var("PORT").expect("Missing `PORT` env variable");
-    // let db_url = env::var("REDIS_URL").expect("Missing `REDIS_URL` env variable");
+    let db_url = env::var("DATABASE_URL").expect("Missing `DATABASE_URL` env variable");
 
     // Get the ServerSetup from env
     // Using a saved ServerSetup is needed to have persistence
@@ -99,7 +100,7 @@ async fn main() {
 
     // Init Database
 
-    let manager = Manager::new("./db/db.sqlite", Runtime::Tokio1);
+    let manager = Manager::new(db_url, Runtime::Tokio1);
 
     let pool = Pool::builder(manager).build().unwrap();
 
@@ -110,10 +111,13 @@ async fn main() {
         .unwrap()
         .unwrap();
 
-    let app_state = Arc::new(RwLock::new(AppState {
-        server_login_states: HashMap::<String, ServerLoginStartResult<DefaultCS>>::new(),
+    let app_state = AppState {
+        server_login_states: Arc::new(RwLock::new(HashMap::<
+            String,
+            ServerLoginStartResult<DefaultCS>,
+        >::new())),
         pool,
-    }));
+    };
 
     // Initilize Axum app
     let app = Router::new()
@@ -162,14 +166,15 @@ async fn main() {
         .unwrap();
 }
 
+#[derive(Clone)]
 pub struct AppState {
-    server_login_states: HashMap<String, ServerLoginStartResult<DefaultCS>>,
+    server_login_states: Arc<RwLock<HashMap<String, ServerLoginStartResult<DefaultCS>>>>,
     pool: Pool,
 }
 
 async fn auth_middleware(
     headers: HeaderMap,
-    State(app_state): State<Arc<RwLock<AppState>>>,
+    State(app_state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -179,26 +184,32 @@ async fn auth_middleware(
             return Err(StatusCode::UNAUTHORIZED);
         };
 
-        let mut conn = app_state
-            .read()
-            .unwrap()
-            .redis_client
-            .get_connection()
-            .unwrap();
+        let conn = app_state.pool.get().await.unwrap();
 
         // Verify token validity
-        match conn.get::<String, String>(format!("session/{}", token)) {
+        match conn
+            .interact({
+                let token = token.to_owned();
+                |conn| sessions::table.find(token).first::<Session>(conn)
+            })
+            .await
+            .unwrap()
+        {
             Ok(session) => {
-                let session: Session = serde_json::from_str(&session).unwrap();
                 let current_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_millis() as u64;
 
-                if session.expiration_date <= current_time {
+                if session.expiration_date as u64 <= current_time {
                     log::debug(&format!("Expired token: {}", token));
                     // Expired token
-                    let _: () = conn.del(format!("session/{}", token)).unwrap();
+                    conn.interact(|conn| {
+                        diesel::delete(sessions::table.find(session.token)).execute(conn)
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap();
 
                     return Err(StatusCode::UNAUTHORIZED);
                 }
@@ -208,7 +219,7 @@ async fn auth_middleware(
                 Ok(response)
             }
 
-            Err(_) => Err(StatusCode::UNAUTHORIZED),
+            Err(_e) => Err(StatusCode::UNAUTHORIZED),
         }
     } else {
         Err(StatusCode::UNAUTHORIZED)
