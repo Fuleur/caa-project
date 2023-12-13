@@ -14,8 +14,8 @@ use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::db::schema::{sessions, users};
-use crate::db::{Session, User};
+use crate::db::schema::{keyrings, sessions, users};
+use crate::db::{NewKeyring, Session, User};
 use crate::log;
 use crate::AppState;
 
@@ -98,12 +98,27 @@ pub async fn register_finish(
 
     let conn = app_state.pool.get().await.unwrap();
 
+    // Create user keyring
+    let user_keyring = NewKeyring { id: None };
+
+    let keyring_id: Option<i32> = conn
+        .interact(|conn| {
+            diesel::insert_into(keyrings::table)
+                .values(user_keyring)
+                .returning(keyrings::id)
+                .get_result(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
     // Create User and store it in DB
     let new_user = User {
         username: register_request.username,
         password: serialized_password,
         pub_key: register_request.user_keypair.0,
         priv_key: register_request.user_keypair.1,
+        keyring: keyring_id.unwrap(),
     };
 
     conn.interact(|conn| {

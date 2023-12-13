@@ -16,6 +16,7 @@ use crate::{
 };
 
 pub mod auth;
+pub mod files;
 
 pub fn authenticated_router(state: AppState) -> Router<AppState> {
     Router::new()

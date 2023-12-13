@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub mod schema;
 
@@ -9,7 +9,8 @@ pub struct User {
     pub username: String,
     pub password: Vec<u8>,
     pub pub_key: Vec<u8>,
-    pub priv_key: Vec<u8>
+    pub priv_key: Vec<u8>,
+    pub keyring: i32,
 }
 
 #[derive(Insertable, Queryable, Selectable, Clone, PartialEq, Serialize, Deserialize, Debug)]
@@ -18,4 +19,17 @@ pub struct Session {
     pub token: String,
     pub user: String,
     pub expiration_date: i64,
+}
+
+#[derive(Queryable, Selectable, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::keyrings)]
+pub struct Keyring {
+    pub id: i32,
+}
+
+
+#[derive(Insertable, Queryable, Selectable, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::keyrings)]
+pub struct NewKeyring {
+    pub id: Option<i32>
 }

@@ -142,7 +142,7 @@ impl Command for RegisterCommand {
                             endpoint_url, ctx.endpoint_port
                         ))
                         .json(&RegisterFinishRequest {
-                            username: "Fuler".to_string(),
+                            username,
                             registration_upload: client_registration_finish_result.message,
                             user_keypair: (keypair.public.to_vec(), private_key_cipher),
                         })
