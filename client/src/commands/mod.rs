@@ -6,7 +6,7 @@ pub mod login;
 pub mod logout;
 pub mod ping;
 pub mod register;
-pub mod session;
+pub mod sessions;
 pub mod set;
 
 pub trait Command {

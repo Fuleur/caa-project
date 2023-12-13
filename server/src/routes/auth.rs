@@ -284,7 +284,42 @@ pub async fn check_session(
     Ok(Json(user_session))
 }
 
-/// Revoke the current user Session
+#[derive(Serialize, Debug)]
+pub struct SessionInfo {
+    token_short: String,
+    expiration_date: i64,
+    current: bool,
+}
+
+/// Get all active user sessions
+pub async fn active_sessions(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+) -> Json<Vec<SessionInfo>> {
+    let conn = app_state.pool.get().await.unwrap();
+    let sessions: Vec<Session> = conn
+        .interact(|conn| {
+            sessions::table
+                .filter(sessions::user.eq(user_session.user))
+                .get_results(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let sessions = sessions
+        .iter()
+        .map(|s| SessionInfo {
+            token_short: s.token[..16].to_string(),
+            expiration_date: s.expiration_date,
+            current: s.token == user_session.token,
+        })
+        .collect();
+
+    Json(sessions)
+}
+
+/// Revoke the current user session
 pub async fn revoke(
     Extension(user_session): Extension<Session>,
     State(app_state): State<AppState>,
@@ -295,6 +330,30 @@ pub async fn revoke(
         .await
         .unwrap()
         .unwrap();
+
+    StatusCode::OK
+}
+
+/// Revoke all user sessions except current
+pub async fn revoke_all(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+) -> StatusCode {
+    let conn = app_state.pool.get().await.unwrap();
+
+    conn.interact(|conn| {
+        diesel::delete(
+            sessions::table.filter(
+                sessions::user
+                    .eq(user_session.user)
+                    .and(sessions::token.ne(user_session.token)),
+            ),
+        )
+        .execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     StatusCode::OK
 }

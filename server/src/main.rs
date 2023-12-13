@@ -16,7 +16,10 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use opaque_ke::*;
 use rand::rngs::OsRng;
-use routes::auth::{self, DefaultCS};
+use routes::{
+    auth::{self, DefaultCS},
+    authenticated_router,
+};
 use std::{
     collections::HashMap,
     env,
@@ -126,20 +129,7 @@ async fn main() {
         .route("/auth/register/finish", post(auth::register_finish))
         .route("/auth/login/start", post(auth::login_start))
         .route("/auth/login/finish", post(auth::login_finish))
-        .route(
-            "/auth/session",
-            get(auth::check_session).route_layer(axum::middleware::from_fn_with_state(
-                app_state.clone(),
-                auth_middleware,
-            )),
-        )
-        .route(
-            "/auth/revoke",
-            post(auth::revoke).route_layer(axum::middleware::from_fn_with_state(
-                app_state.clone(),
-                auth_middleware,
-            )),
-        )
+        .merge(authenticated_router(app_state.clone()))
         .layer(ServiceBuilder::new().layer(Extension(server_setup_state)))
         .with_state(app_state);
 
@@ -170,60 +160,6 @@ async fn main() {
 pub struct AppState {
     server_login_states: Arc<RwLock<HashMap<String, ServerLoginStartResult<DefaultCS>>>>,
     pool: Pool,
-}
-
-async fn auth_middleware(
-    headers: HeaderMap,
-    State(app_state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if let Some(token) = headers.get("Authorization") {
-        // Get String token (strip the "Bearer " from the header value)
-        let Some(token) = token.to_str().unwrap().get(7..) else {
-            return Err(StatusCode::UNAUTHORIZED);
-        };
-
-        let conn = app_state.pool.get().await.unwrap();
-
-        // Verify token validity
-        match conn
-            .interact({
-                let token = token.to_owned();
-                |conn| sessions::table.find(token).first::<Session>(conn)
-            })
-            .await
-            .unwrap()
-        {
-            Ok(session) => {
-                let current_time = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
-
-                if session.expiration_date as u64 <= current_time {
-                    log::debug(&format!("Expired token: {}", token));
-                    // Expired token
-                    conn.interact(|conn| {
-                        diesel::delete(sessions::table.find(session.token)).execute(conn)
-                    })
-                    .await
-                    .unwrap()
-                    .unwrap();
-
-                    return Err(StatusCode::UNAUTHORIZED);
-                }
-
-                request.extensions_mut().insert(session);
-                let response = next.run(request).await;
-                Ok(response)
-            }
-
-            Err(_e) => Err(StatusCode::UNAUTHORIZED),
-        }
-    } else {
-        Err(StatusCode::UNAUTHORIZED)
-    }
 }
 
 async fn hello() -> &'static str {

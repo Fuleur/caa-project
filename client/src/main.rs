@@ -1,6 +1,6 @@
 use crate::commands::{
     exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
-    ping::PingCommand, register::RegisterCommand, session::SessionCommand, set::SetCommand,
+    ping::PingCommand, register::RegisterCommand, sessions::SessionsCommand, set::SetCommand,
     Command,
 };
 use argon2::Argon2;
@@ -27,7 +27,7 @@ lazy_static! {
         map.insert("login", Box::new(LoginCommand));
         map.insert("logout", Box::new(LogoutCommand));
         map.insert("register", Box::new(RegisterCommand));
-        map.insert("session", Box::new(SessionCommand));
+        map.insert("sessions", Box::new(SessionsCommand));
 
         map
     };
