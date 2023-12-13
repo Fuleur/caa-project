@@ -1,4 +1,4 @@
 target/
 certs/
-db/db.sqlite
+db/*
 .env

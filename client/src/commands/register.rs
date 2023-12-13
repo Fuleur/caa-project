@@ -66,7 +66,7 @@ impl Command for RegisterCommand {
                 .danger_accept_invalid_certs(ctx.accept_invalid_cert)
                 .build()
                 .unwrap();
-            
+
             // Send RegistrationRequest to the Server
             let res = client
                 .post(format!(
@@ -142,24 +142,32 @@ impl Command for RegisterCommand {
                             endpoint_url, ctx.endpoint_port
                         ))
                         .json(&RegisterFinishRequest {
-                            username,
+                            username: "Fuler".to_string(),
                             registration_upload: client_registration_finish_result.message,
                             user_keypair: (keypair.public.to_vec(), private_key_cipher),
                         })
                         .send()
                     {
-                        Ok(res) => match res.error_for_status() {
-                            Ok(_) => {
-                                log::info("Registration complete ! You can now login.");
-                            }
+                        Ok(res) => {
+                            match res.error_for_status() {
+                                Ok(_) => {
+                                    log::info("Registration complete ! You can now login.");
+                                }
 
-                            Err(e) => {
-                                log::error(&format!(
-                                    "Error on register: {}",
-                                    e.status().unwrap().to_string().red()
-                                ));
+                                Err(e) => {
+                                    let status = e.status().unwrap();
+
+                                    if status == StatusCode::CONFLICT {
+                                        log::error("An account is already registered with this username :/");
+                                    } else {
+                                        log::error(&format!(
+                                            "Error on register: {}",
+                                            e.to_string().red()
+                                        ));
+                                    }
+                                }
                             }
-                        },
+                        }
 
                         Err(e) => {
                             log::error(&format!("Error on register: {}", e.to_string().red()));
@@ -168,13 +176,7 @@ impl Command for RegisterCommand {
                 }
 
                 Err(e) => {
-                    let status = e.status().unwrap();
-
-                    if status == StatusCode::CONFLICT {
-                        log::error("An account is already registered with this username :/");
-                    } else {
-                        log::error(&format!("Error on register: {}", e.to_string().red()));
-                    }
+                    log::error(&format!("Error on register: {}", e.to_string().red()));
                 }
             }
         } else {

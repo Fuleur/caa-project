@@ -38,32 +38,10 @@ pub struct RegisterRequest {
 
 /// OPAQUE Register Start
 pub async fn register_start(
-    State(app_state): State<AppState>,
     Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
     Json(register_request): Json<RegisterRequest>,
 ) -> Result<Json<RegistrationResponse<DefaultCS>>, StatusCode> {
     log::debug("New registration request");
-
-    let conn = app_state.pool.get().await.unwrap();
-
-    // Check if a user with this username already exists
-    // If yes, return a 409 Conflict
-    let res: Result<User, _> = conn
-        .interact({
-            let username = register_request.username.clone();
-
-            |conn| {
-                users::table
-                    .filter(users::username.eq(username))
-                    .first(conn)
-            }
-        })
-        .await
-        .unwrap();
-
-    if res.is_ok() {
-        return Err(StatusCode::CONFLICT);
-    }
 
     // Create ServerRegistration
     let server_registration_start_result = ServerRegistration::<DefaultCS>::start(
@@ -90,6 +68,27 @@ pub async fn register_finish(
     Json(register_request): Json<RegisterFinishRequest>,
 ) -> StatusCode {
     log::debug(&format!("New registration finish request"));
+
+    let conn = app_state.pool.get().await.unwrap();
+
+    // Check if a user with this username already exists
+    // If yes, return a 409 Conflict
+    let res: Result<User, _> = conn
+        .interact({
+            let username = register_request.username.clone();
+
+            |conn| {
+                users::table
+                    .filter(users::username.eq(username))
+                    .first(conn)
+            }
+        })
+        .await
+        .unwrap();
+
+    if res.is_ok() {
+        return StatusCode::CONFLICT;
+    }
 
     // Finalize the registration and get the Password File from it
     // Serialize it and store it in redis
