@@ -1,7 +1,10 @@
-use crate::commands::{
-    exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
-    ping::PingCommand, register::RegisterCommand, sessions::SessionsCommand, set::SetCommand,
-    Command, change_password::ChangePasswordCommand,
+use crate::{
+    commands::{
+        change_password::ChangePasswordCommand, exit::ExitCommand, help::HelpCommand,
+        login::LoginCommand, logout::LogoutCommand, ping::PingCommand, register::RegisterCommand,
+        sessions::SessionsCommand, set::SetCommand, Command, upload_file::UploadFileCommand,
+    },
+    models::KeyringWithKeys,
 };
 use argon2::Argon2;
 use colored::Colorize;
@@ -15,6 +18,7 @@ use std::{
 
 mod commands;
 mod log;
+mod models;
 
 // Initialize static `COMMANDS` HashMap
 lazy_static! {
@@ -29,6 +33,8 @@ lazy_static! {
         map.insert("register", Box::new(RegisterCommand));
         map.insert("sessions", Box::new(SessionsCommand));
         map.insert("change-password", Box::new(ChangePasswordCommand));
+        map.insert("upload", Box::new(UploadFileCommand));
+
 
         map
     };
@@ -63,6 +69,7 @@ fn main() {
         private_key: None,
         public_key: None,
         accept_invalid_cert: cfg.accept_invalid_cert,
+        keyring: None,
     };
 
     if ctx.endpoint_url.is_none() {
@@ -117,6 +124,7 @@ pub struct TSFSContext {
     private_key: Option<Vec<u8>>,
     public_key: Option<Vec<u8>>,
     accept_invalid_cert: bool,
+    keyring: Option<KeyringWithKeys>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

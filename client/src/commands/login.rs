@@ -13,7 +13,7 @@ use opaque_ke::{
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
-use crate::{log, DefaultCS, TSFSContext};
+use crate::{log, models::KeyringWithKeys, DefaultCS, TSFSContext};
 
 use super::Command;
 
@@ -31,9 +31,11 @@ pub struct LoginRequestFinish {
     credential_finalization: CredentialFinalization<DefaultCS>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct LoginRequestResult {
     keypair: (Vec<u8>, Vec<u8>),
+    keyring: KeyringWithKeys,
+
 }
 
 impl Command for LoginCommand {
@@ -156,6 +158,7 @@ impl Command for LoginCommand {
                     // Update Context with keys
                     ctx.private_key = Some(private_key);
                     ctx.public_key = Some(user_keypair.0);
+                    ctx.keyring = Some(login_result.keyring);
 
                     // Here is our Session Key that will be used as Session Token
                     let b64_token = general_purpose::STANDARD_NO_PAD

@@ -32,7 +32,7 @@ pub struct Session {
 }
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Associations, Clone, PartialEq, Debug)]
-#[diesel(belongs_to(Keyring))]
+#[diesel(belongs_to(Keyring, foreign_key = keyring_id))]
 #[diesel(table_name = self::schema::keys)]
 pub struct Key {
     pub target: String,
@@ -48,7 +48,7 @@ pub struct NewKey {
     pub keyring_id: i32
 }   
 
-#[derive(Queryable, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Identifiable, Queryable, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[diesel(table_name = self::schema::keyrings)]
 pub struct Keyring {
     pub id: i32,
@@ -57,9 +57,9 @@ pub struct Keyring {
 #[derive(Queryable, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[diesel(belongs_to(Key))]
 #[diesel(table_name = self::schema::keyrings)]
-pub struct KeyringWithKey {
+pub struct KeyringWithKeys {
     pub id: i32,
-    pub keys: Key,
+    pub keys: Vec<Key>,
 }
 
 #[derive(Insertable, Queryable, Selectable, Clone, PartialEq, Debug)]
@@ -72,18 +72,18 @@ pub struct NewKeyring {
 #[diesel(table_name = self::schema::files)]
 pub struct NewFile {
     pub id: String,
-    pub name: Vec<u8>,
+    pub name: String,
     pub mtime: i64,
     pub sz: i32,
     pub data: Vec<u8>,
-    pub keyring: i32,
+    pub keyring: Option<i32>,
 }
 
 #[derive(Queryable, Selectable, Clone, PartialEq, Debug)]
 #[diesel(table_name = self::schema::files)]
 pub struct File {
     pub id: String,
-    pub name: Vec<u8>,
+    pub name: String,
     pub mtime: i64,
     pub sz: i32,
     pub data: Vec<u8>,

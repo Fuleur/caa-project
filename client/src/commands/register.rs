@@ -120,7 +120,7 @@ impl Command for RegisterCommand {
                     // Generate Keypair for User Keychain
                     log::info("Generating RSA Keypair...");
                     let mut rng = OsRng;
-                    let priv_key = RsaPrivateKey::new(&mut rng, 4096).expect("failed to generate a key");
+                    let priv_key = RsaPrivateKey::new(&mut rng, 3072).expect("failed to generate a key");
                     let pub_key = RsaPublicKey::from(&priv_key);
 
                     log::info("Encrypting private key...");

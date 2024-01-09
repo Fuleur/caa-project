@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::db::schema::{keyrings, keys, sessions, users};
-use crate::db::{Keyring, NewKeyring, Session, User, UserWithKeyring, Key};
+use crate::db::{Key, Keyring, KeyringWithKeys, NewKeyring, Session, User, UserWithKeyring};
 use crate::log;
 use crate::AppState;
 
@@ -231,7 +231,7 @@ pub struct LoginRequestFinish {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LoginRequestResult {
     keypair: (Vec<u8>, Vec<u8>),
-    keyring: Keyring,
+    keyring: KeyringWithKeys,
 }
 
 /// OPAQUE Login Finish
@@ -317,9 +317,24 @@ pub async fn login_finish(
         .unwrap()
         .unwrap();
 
+    let user_keys: Vec<Key> = conn
+        .interact(move |conn| {
+            keys::table
+                .filter(keys::keyring_id.eq(user.keyring.id))
+                .load::<Key>(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let keyring_with_keys = KeyringWithKeys {
+        id: user.keyring.id,
+        keys: user_keys
+    };
+
     Json(LoginRequestResult {
         keypair: (user.pub_key, user.priv_key),
-        keyring: user.keyring,
+        keyring: keyring_with_keys,
     })
 }
 

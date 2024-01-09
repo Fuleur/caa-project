@@ -9,6 +9,7 @@ pub mod ping;
 pub mod register;
 pub mod sessions;
 pub mod set;
+pub mod upload_file;
 
 pub trait Command {
     fn execute(&self, args: &Vec<String>, ctx: &mut TSFSContext);

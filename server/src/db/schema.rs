@@ -3,7 +3,7 @@
 diesel::table! {
     files (id) {
         id -> Nullable<Text>,
-        name -> Nullable<Binary>,
+        name -> Nullable<Text>,
         mtime -> Nullable<BigInt>,
         sz -> Nullable<Integer>,
         data -> Nullable<Binary>,
