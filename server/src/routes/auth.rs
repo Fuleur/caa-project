@@ -39,9 +39,31 @@ pub struct RegisterRequest {
 /// OPAQUE Register Start
 pub async fn register_start(
     Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
+    State(app_state): State<AppState>,
     Json(register_request): Json<RegisterRequest>,
 ) -> Result<Json<RegistrationResponse<DefaultCS>>, StatusCode> {
     log::debug("New registration request");
+
+    let conn = app_state.pool.get().await.unwrap();
+
+    // Check if a user with this username already exists
+    // If yes, return a 409 Conflict
+    let res: Result<User, _> = conn
+        .interact({
+            let username = register_request.username.clone();
+
+            |conn| {
+                users::table
+                    .filter(users::username.eq(username))
+                    .first(conn)
+            }
+        })
+        .await
+        .unwrap();
+
+    if res.is_ok() {
+        return Err(StatusCode::CONFLICT);
+    }
 
     // Create ServerRegistration
     let server_registration_start_result = ServerRegistration::<DefaultCS>::start(
@@ -374,6 +396,60 @@ pub async fn revoke_all(
             ),
         )
         .execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    StatusCode::OK
+}
+
+pub async fn change_password_start(
+    Extension(user_session): Extension<Session>,
+    Extension(server_setup): Extension<Arc<ServerSetup<DefaultCS>>>,
+    Json(registration_request): Json<RegistrationRequest<DefaultCS>>,
+) -> Result<Json<RegistrationResponse<DefaultCS>>, StatusCode> {
+    // Create ServerRegistration
+    let server_registration_start_result = ServerRegistration::<DefaultCS>::start(
+        &server_setup,
+        registration_request,
+        user_session.user.as_bytes(),
+    )
+    .unwrap();
+
+    // Send back the RegistrationResponse to the Client
+    Ok(Json(server_registration_start_result.message))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PasswordChangeFinishRequest {
+    registration_upload: RegistrationUpload<DefaultCS>,
+    user_new_private_key: Vec<u8>,
+}
+
+pub async fn change_password_finish(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+    Json(password_change_request): Json<PasswordChangeFinishRequest>,
+) -> StatusCode {
+    log::debug(&format!("New registration finish request"));
+
+    // Finalize the registration and get the Password File from it
+    // Serialize it and store it in redis
+    let password_file =
+        ServerRegistration::<DefaultCS>::finish(password_change_request.registration_upload);
+    let serialized_password: Vec<u8> = password_file.serialize().to_vec();
+
+    let conn = app_state.pool.get().await.unwrap();
+
+    conn.interact(|conn| {
+        diesel::update(users::table)
+            .filter(users::username.eq(user_session.user))
+            .set((
+                users::password.eq(serialized_password),
+                users::priv_key.eq(password_change_request.user_new_private_key),
+            ))
+            .execute(conn)
     })
     .await
     .unwrap()

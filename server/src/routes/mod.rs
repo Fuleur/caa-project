@@ -24,6 +24,8 @@ pub fn authenticated_router(state: AppState) -> Router<AppState> {
         .route("/auth/sessions", get(auth::active_sessions))
         .route("/auth/revoke", post(auth::revoke))
         .route("/auth/revoke_all", post(auth::revoke_all))
+        .route("/auth/change_password/start", post(auth::change_password_start))
+        .route("/auth/change_password/finish", post(auth::change_password_finish))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
