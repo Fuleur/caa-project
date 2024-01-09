@@ -1,9 +1,10 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    files (name) {
+    files (id) {
+        id -> Nullable<Text>,
         name -> Nullable<Binary>,
-        mtime -> Nullable<Integer>,
+        mtime -> Nullable<BigInt>,
         sz -> Nullable<Integer>,
         data -> Nullable<Binary>,
         keyring -> Nullable<Integer>,
@@ -12,15 +13,15 @@ diesel::table! {
 
 diesel::table! {
     keyrings (id) {
-        id -> Nullable<Integer>,
+        id -> Integer,
     }
 }
 
 diesel::table! {
     keys (target) {
-        target -> Binary,
+        target -> Text,
         key -> Binary,
-        keyring -> Integer,
+        keyring_id -> Integer,
     }
 }
 
@@ -42,8 +43,10 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(keys -> keyrings (keyring));
+diesel::joinable!(keys -> files (target));
+diesel::joinable!(keys -> keyrings (keyring_id));
 diesel::joinable!(sessions -> users (user));
+diesel::joinable!(users -> keyrings (keyring));
 
 diesel::allow_tables_to_appear_in_same_query!(
     files,

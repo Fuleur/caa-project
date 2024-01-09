@@ -13,6 +13,16 @@ pub struct User {
     pub keyring: i32,
 }
 
+#[derive(Queryable, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::users)]
+pub struct UserWithKeyring {
+    pub username: String,
+    pub password: Vec<u8>,
+    pub pub_key: Vec<u8>,
+    pub priv_key: Vec<u8>,
+    pub keyring: Keyring,
+}
+
 #[derive(Insertable, Queryable, Selectable, Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[diesel(table_name = self::schema::sessions)]
 pub struct Session {
@@ -21,15 +31,61 @@ pub struct Session {
     pub expiration_date: i64,
 }
 
-#[derive(Queryable, Selectable, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Queryable, Selectable, Serialize, Deserialize, Associations, Clone, PartialEq, Debug)]
+#[diesel(belongs_to(Keyring))]
+#[diesel(table_name = self::schema::keys)]
+pub struct Key {
+    pub target: String,
+    pub key: Vec<u8>,
+    pub keyring_id: i32,
+}
+
+#[derive(Insertable, Queryable, Selectable, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::keys)]
+pub struct NewKey {
+    pub target: String,
+    pub key: Vec<u8>,
+    pub keyring_id: i32
+}   
+
+#[derive(Queryable, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[diesel(table_name = self::schema::keyrings)]
 pub struct Keyring {
     pub id: i32,
 }
 
+#[derive(Queryable, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[diesel(belongs_to(Key))]
+#[diesel(table_name = self::schema::keyrings)]
+pub struct KeyringWithKey {
+    pub id: i32,
+    pub keys: Key,
+}
 
 #[derive(Insertable, Queryable, Selectable, Clone, PartialEq, Debug)]
 #[diesel(table_name = self::schema::keyrings)]
 pub struct NewKeyring {
     pub id: Option<i32>
+}
+
+#[derive(Insertable, Queryable, Selectable, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::files)]
+pub struct NewFile {
+    pub id: String,
+    pub name: Vec<u8>,
+    pub mtime: i64,
+    pub sz: i32,
+    pub data: Vec<u8>,
+    pub keyring: i32,
+}
+
+#[derive(Queryable, Selectable, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::files)]
+pub struct File {
+    pub id: String,
+    pub name: Vec<u8>,
+    pub mtime: i64,
+    pub sz: i32,
+    pub data: Vec<u8>,
+    pub keyring: Option<Keyring>,
 }

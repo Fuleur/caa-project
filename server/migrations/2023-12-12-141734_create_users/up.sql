@@ -4,5 +4,5 @@ CREATE TABLE users (
     pub_key     BLOB NOT NULL,
     priv_key    BLOB NOT NULL,
     keyring     INT NOT NULL,
-    FOREIGN KEY(keyring) REFERENCES keyrings(i)
+    FOREIGN KEY(keyring) REFERENCES keyrings(id)
 );

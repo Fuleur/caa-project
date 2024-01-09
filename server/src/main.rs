@@ -1,17 +1,8 @@
-use axum::{
-    extract::{Request, State},
-    http::{HeaderMap, StatusCode},
-    middleware::Next,
-    response::Response,
-    routing::{get, post},
-    Extension, Router,
-};
+use axum::{routing::post, Extension, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
-use db::{schema::sessions, Session};
 use deadpool_diesel::{sqlite::Pool, Manager, Runtime};
-use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenv::dotenv;
 use opaque_ke::*;
@@ -26,10 +17,9 @@ use std::{
     fs::{self, File},
     io::Write,
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, RwLock},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tower::ServiceBuilder;
 
@@ -45,38 +35,14 @@ async fn main() {
 
     // If --setup arg is passed, generate a fresh ServerSetup and print it's base64 serialization
     if env::args().find(|a| a == "--setup").is_some() {
-        println!("Generating a fresh ServerSetup. Use it in your OPAQUE_SERVER_SETUP env var.\n");
-        let mut rng = OsRng;
-        let server_setup = ServerSetup::<DefaultCS>::new(&mut rng);
-        let b64_server_setup = general_purpose::STANDARD_NO_PAD.encode(server_setup.serialize());
-        println!("{}: {}", "OPAQUE ServerSetup".cyan(), b64_server_setup);
-
+        generate_opaque_setup();
         return;
     }
 
     // If --self-signed arg is passed, generate new self signed certificates for HTTPS
     // This certificate is ONLY for local development as this app only serve HTTPS
     if env::args().find(|a| a == "--self-signed").is_some() {
-        log::warning("Generating new self-signed certificate. Use only for development !\n");
-        let cert = rcgen::generate_simple_self_signed(vec![]).unwrap();
-
-        fs::create_dir_all(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/")).unwrap();
-
-        // Write Certificate file
-        let mut cert_file =
-            File::create(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/cert.pem")).unwrap();
-        cert_file
-            .write_all(&cert.serialize_pem().unwrap().as_bytes())
-            .unwrap();
-
-        // Write Private Key file
-        let mut key_file =
-            File::create(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/key.pem")).unwrap();
-        key_file
-            .write_all(&cert.serialize_private_key_pem().as_bytes())
-            .unwrap();
-
-        log::info("Self-signed certificate generated !");
+        generate_ss_certs();
         return;
     }
 
@@ -102,9 +68,7 @@ async fn main() {
     let server_setup_state = Arc::new(server_setup);
 
     // Init Database
-
     let manager = Manager::new(db_url, Runtime::Tokio1);
-
     let pool = Pool::builder(manager).build().unwrap();
 
     // Run diesel migrations
@@ -122,9 +86,8 @@ async fn main() {
         pool,
     };
 
-    // Initilize Axum app
+    // Axum app
     let app = Router::new()
-        .route("/", get(hello))
         .route("/auth/register/start", post(auth::register_start))
         .route("/auth/register/finish", post(auth::register_finish))
         .route("/auth/login/start", post(auth::login_start))
@@ -133,9 +96,7 @@ async fn main() {
         .layer(ServiceBuilder::new().layer(Extension(server_setup_state)))
         .with_state(app_state);
 
-    // Start HTTPS Server
-
-    // Set HTTPS config
+    // Setup HTTPS Server
     let config = RustlsConfig::from_pem_file(
         env::var("CERT_FILE").expect("Missing CERT_FILE env var"),
         env::var("CERT_KEY_FILE").expect("Missing CERT_KEY_FILE env var"),
@@ -150,18 +111,48 @@ async fn main() {
         listening_address, port
     ));
 
+    // Bind and serve Axum app over HTTPS
     axum_server::bind_rustls(addr, config)
         .serve(app.into_make_service())
         .await
         .unwrap();
 }
 
+/// Generate a new OPAQUE ServerSetup
+fn generate_opaque_setup() {
+    println!("Generating a fresh ServerSetup. Use it in your OPAQUE_SERVER_SETUP env var.\n");
+    let mut rng = OsRng;
+    let server_setup = ServerSetup::<DefaultCS>::new(&mut rng);
+    let b64_server_setup = general_purpose::STANDARD_NO_PAD.encode(server_setup.serialize());
+    println!("{}: {}", "OPAQUE ServerSetup".cyan(), b64_server_setup);
+}
+
+/// Generate new self-signed certificate
+fn generate_ss_certs() {
+    log::warning("Generating new self-signed certificate. Use only for development !\n");
+    let cert = rcgen::generate_simple_self_signed(vec![]).unwrap();
+
+    fs::create_dir_all(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/")).unwrap();
+
+    // Write Certificate file
+    let mut cert_file =
+        File::create(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/cert.pem")).unwrap();
+    cert_file
+        .write_all(&cert.serialize_pem().unwrap().as_bytes())
+        .unwrap();
+
+    // Write Private Key file
+    let mut key_file =
+        File::create(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("certs/key.pem")).unwrap();
+    key_file
+        .write_all(&cert.serialize_private_key_pem().as_bytes())
+        .unwrap();
+
+    log::info("Self-signed certificate generated !");
+}
+
 #[derive(Clone)]
 pub struct AppState {
     server_login_states: Arc<RwLock<HashMap<String, ServerLoginStartResult<DefaultCS>>>>,
     pool: Pool,
-}
-
-async fn hello() -> &'static str {
-    "hello world"
 }

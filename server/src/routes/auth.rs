@@ -14,8 +14,8 @@ use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::db::schema::{keyrings, sessions, users};
-use crate::db::{NewKeyring, Session, User};
+use crate::db::schema::{keyrings, keys, sessions, users};
+use crate::db::{Keyring, NewKeyring, Session, User, UserWithKeyring, Key};
 use crate::log;
 use crate::AppState;
 
@@ -101,7 +101,7 @@ pub async fn register_finish(
     // Create user keyring
     let user_keyring = NewKeyring { id: None };
 
-    let keyring_id: Option<i32> = conn
+    let keyring_id: i32 = conn
         .interact(|conn| {
             diesel::insert_into(keyrings::table)
                 .values(user_keyring)
@@ -118,7 +118,7 @@ pub async fn register_finish(
         password: serialized_password,
         pub_key: register_request.user_keypair.0,
         priv_key: register_request.user_keypair.1,
-        keyring: keyring_id.unwrap(),
+        keyring: keyring_id,
     };
 
     conn.interact(|conn| {
@@ -209,6 +209,7 @@ pub struct LoginRequestFinish {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LoginRequestResult {
     keypair: (Vec<u8>, Vec<u8>),
+    keyring: Keyring,
 }
 
 /// OPAQUE Login Finish
@@ -276,11 +277,19 @@ pub async fn login_finish(
     .unwrap();
 
     // Get user public and private key
-    let user = conn
+    let user: UserWithKeyring = conn
         .interact(|conn| {
             users::table
-                .find(login_request.username)
-                .first::<User>(conn)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::password,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .filter(users::username.eq(login_request.username))
+                .first::<UserWithKeyring>(conn)
         })
         .await
         .unwrap()
@@ -288,6 +297,7 @@ pub async fn login_finish(
 
     Json(LoginRequestResult {
         keypair: (user.pub_key, user.priv_key),
+        keyring: user.keyring,
     })
 }
 

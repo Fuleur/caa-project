@@ -1,3 +1,3 @@
 CREATE TABLE keyrings (
-    id INTEGER PRIMARY KEY         
+    id INTEGER PRIMARY KEY NOT NULL
 )

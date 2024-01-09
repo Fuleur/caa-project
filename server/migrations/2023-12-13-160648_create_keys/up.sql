@@ -1,6 +1,7 @@
 CREATE TABLE keys (
-    target BLOB PRIMARY KEY NOT NULL,
+    target VARCHAR PRIMARY KEY NOT NULL,
     key BLOB NOT NULL,                   -- [encrypted]
-    keyring INTEGER NOT NULL,
-    FOREIGN KEY(keyring) REFERENCES keyrings(id)
+    keyring_id INTEGER NOT NULL,
+    FOREIGN KEY(keyring_id) REFERENCES keyrings(id),
+    FOREIGN KEY(target) REFERENCES files(id)
 );
