@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod schema;
 
-#[derive(Queryable, Selectable, Insertable, Clone, PartialEq, Debug)]
-#[diesel(table_name = self::schema::users)]
+#[derive(Identifiable, Queryable, Selectable, Insertable, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::users, primary_key(username))]
 pub struct User {
     pub username: String,
     pub password: Vec<u8>,

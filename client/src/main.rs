@@ -1,7 +1,7 @@
 use crate::commands::{
     exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
     ping::PingCommand, register::RegisterCommand, sessions::SessionsCommand, set::SetCommand,
-    Command,
+    Command, change_password::ChangePasswordCommand,
 };
 use argon2::Argon2;
 use colored::Colorize;
@@ -18,8 +18,8 @@ mod log;
 
 // Initialize static `COMMANDS` HashMap
 lazy_static! {
-    static ref COMMANDS: HashMap<&'static str, Box<dyn Command + Sync>> = {
-        let mut map: HashMap<&'static str, Box<dyn Command + Sync>> = HashMap::new();
+    static ref COMMANDS: HashMap<&'static str, Box<dyn Command + Sync + Send>> = {
+        let mut map: HashMap<&'static str, Box<dyn Command + Sync + Send>> = HashMap::new();
         map.insert("help", Box::new(HelpCommand));
         map.insert("exit", Box::new(ExitCommand));
         map.insert("ping", Box::new(PingCommand));
@@ -28,6 +28,7 @@ lazy_static! {
         map.insert("logout", Box::new(LogoutCommand));
         map.insert("register", Box::new(RegisterCommand));
         map.insert("sessions", Box::new(SessionsCommand));
+        map.insert("change-password", Box::new(ChangePasswordCommand));
 
         map
     };

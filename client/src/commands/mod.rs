@@ -1,5 +1,6 @@
 use crate::TSFSContext;
 
+pub mod change_password;
 pub mod exit;
 pub mod help;
 pub mod login;

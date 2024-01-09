@@ -1,5 +1,3 @@
-use std::io::{self, Write};
-
 use base64::{engine::general_purpose, Engine};
 use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit},
@@ -7,55 +5,34 @@ use chacha20poly1305::{
 };
 use colored::Colorize;
 use opaque_ke::{
-    ClientRegistration, ClientRegistrationFinishParameters, Identifiers, RegistrationRequest,
-    RegistrationResponse, RegistrationUpload,
+    ClientRegistration, ClientRegistrationFinishParameters, Identifiers, RegistrationResponse,
+    RegistrationUpload,
 };
 use rand::rngs::OsRng;
-use reqwest::StatusCode;
-use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey, pkcs1::{EncodeRsaPublicKey, EncodeRsaPrivateKey}};
 use serde::{Deserialize, Serialize};
 
 use crate::{log, DefaultCS, TSFSContext};
 
 use super::Command;
 
-pub struct RegisterCommand;
+pub struct ChangePasswordCommand;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct RegisterRequest {
-    username: String,
-    registration_request: RegistrationRequest<DefaultCS>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RegisterFinishRequest {
-    username: String,
+pub struct PasswordChangeFinishRequest {
     registration_upload: RegistrationUpload<DefaultCS>,
-    // (pub_key, priv_key)
-    user_keypair: (Vec<u8>, Vec<u8>),
+    user_new_private_key: Vec<u8>,
 }
 
-impl Command for RegisterCommand {
+impl Command for ChangePasswordCommand {
     fn execute(&self, _args: &Vec<String>, ctx: &mut TSFSContext) {
-        if ctx.session_token.is_some() {
-            log::error(&format!(
-                "Already connected, must {} first",
-                "logout".green()
-            ));
+        if ctx.session_token.is_none() {
+            log::error("Not connected, must login first");
             return;
         }
 
         if let Some(endpoint_url) = &ctx.endpoint_url {
-            // Username input
-            print!("Username: ");
-            io::stdout().flush().unwrap();
-
-            let mut username = String::new();
-            io::stdin().read_line(&mut username).unwrap();
-            username = username.trim().to_string();
-
             // Password input
-            let password = rpassword::prompt_password("Password: ").unwrap();
+            let password = rpassword::prompt_password("New Password: ").unwrap();
 
             // Create ClientRegistration
             let mut client_rng = OsRng;
@@ -71,13 +48,14 @@ impl Command for RegisterCommand {
             // Send RegistrationRequest to the Server
             let res = client
                 .post(format!(
-                    "{}:{}/auth/register/start",
+                    "{}:{}/auth/change_password/start",
                     endpoint_url, ctx.endpoint_port
                 ))
-                .json(&RegisterRequest {
-                    username: username.clone(),
-                    registration_request: client_registration_start_result.message,
-                })
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", ctx.session_token.as_ref().unwrap()),
+                )
+                .json(&client_registration_start_result.message)
                 .send();
 
             if res.is_err() {
@@ -99,7 +77,7 @@ impl Command for RegisterCommand {
                             res.json::<RegistrationResponse<DefaultCS>>().unwrap(),
                             ClientRegistrationFinishParameters::new(
                                 Identifiers {
-                                    client: Some(username.as_bytes()),
+                                    client: Some(ctx.username.as_ref().unwrap().as_bytes()),
                                     server: Some(b"TSFSServer"),
                                 },
                                 None,
@@ -117,21 +95,17 @@ impl Command for RegisterCommand {
                         general_purpose::STANDARD_NO_PAD.encode(export_key)
                     ));
 
-                    // Generate Keypair for User Keychain
-                    log::info("Generating RSA Keypair...");
-                    let mut rng = OsRng;
-                    let priv_key = RsaPrivateKey::new(&mut rng, 4096).expect("failed to generate a key");
-                    let pub_key = RsaPublicKey::from(&priv_key);
-
                     log::info("Encrypting private key...");
+                    let mut rng = OsRng;
 
                     // Need to shrink the 64 bytes Export Key to 32 bytes
                     let key = Key::from_slice(&export_key[..32]);
                     let cipher = ChaCha20Poly1305::new(&key);
                     let nonce = ChaCha20Poly1305::generate_nonce(&mut rng);
 
-                    let encrypted_private_key =
-                        cipher.encrypt(&nonce, priv_key.to_pkcs1_der().unwrap().as_bytes()).unwrap();
+                    let encrypted_private_key = cipher
+                        .encrypt(&nonce, ctx.private_key.as_ref().unwrap().as_ref())
+                        .unwrap();
                     // Concat the nonce with the ciphertext
                     let private_key_cipher = [nonce.to_vec(), encrypted_private_key].concat();
 
@@ -140,36 +114,31 @@ impl Command for RegisterCommand {
                     // Send RegistrationUpload to the Server
                     match client
                         .post(format!(
-                            "{}:{}/auth/register/finish",
+                            "{}:{}/auth/change_password/finish",
                             endpoint_url, ctx.endpoint_port
                         ))
-                        .json(&RegisterFinishRequest {
-                            username,
+                        .header(
+                            "Authorization",
+                            format!("Bearer {}", ctx.session_token.as_ref().unwrap()),
+                        )
+                        .json(&PasswordChangeFinishRequest {
                             registration_upload: client_registration_finish_result.message,
-                            user_keypair: (pub_key.to_pkcs1_der().unwrap().to_vec(), private_key_cipher),
+                            user_new_private_key: private_key_cipher,
                         })
                         .send()
                     {
-                        Ok(res) => {
-                            match res.error_for_status() {
-                                Ok(_) => {
-                                    log::info("Registration complete ! You can now login.");
-                                }
-
-                                Err(e) => {
-                                    let status = e.status().unwrap();
-
-                                    if status == StatusCode::CONFLICT {
-                                        log::error("An account is already registered with this username :/");
-                                    } else {
-                                        log::error(&format!(
-                                            "Error on register: {}",
-                                            e.to_string().red()
-                                        ));
-                                    }
-                                }
+                        Ok(res) => match res.error_for_status() {
+                            Ok(_) => {
+                                log::info("Password change complete !");
                             }
-                        }
+
+                            Err(e) => {
+                                log::error(&format!(
+                                    "Error on password change: {}",
+                                    e.to_string().red()
+                                ));
+                            }
+                        },
 
                         Err(e) => {
                             log::error(&format!("Error on register: {}", e.to_string().red()));
@@ -178,16 +147,10 @@ impl Command for RegisterCommand {
                 }
 
                 Err(e) => {
-                    let status = e.status().unwrap();
-
-                    if status == StatusCode::CONFLICT {
-                        log::error("An account is already registered with this username :/");
-                    } else {
-                        log::error(&format!(
-                            "Error on register: {}",
-                            e.to_string().red()
-                        ));
-                    }
+                    log::error(&format!(
+                        "Error on password change: {}",
+                        e.to_string().red()
+                    ));
                 }
             }
         } else {
