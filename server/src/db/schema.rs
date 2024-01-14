@@ -2,12 +2,12 @@
 
 diesel::table! {
     files (id) {
-        id -> Nullable<Text>,
-        name -> Nullable<Text>,
+        id -> Text,
+        name -> Text,
         mtime -> Nullable<BigInt>,
         sz -> Nullable<Integer>,
         data -> Nullable<Binary>,
-        keyring -> Nullable<Integer>,
+        keyring_id -> Nullable<Integer>,
     }
 }
 
@@ -43,6 +43,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(files -> keyrings (keyring_id));
 diesel::joinable!(keys -> files (target));
 diesel::joinable!(keys -> keyrings (keyring_id));
 diesel::joinable!(sessions -> users (user));

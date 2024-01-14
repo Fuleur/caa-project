@@ -76,16 +76,52 @@ pub struct NewFile {
     pub mtime: i64,
     pub sz: i32,
     pub data: Vec<u8>,
-    pub keyring: Option<i32>,
+    pub keyring_id: Option<i32>,
 }
 
-#[derive(Queryable, Selectable, Clone, PartialEq, Debug)]
+#[derive(Serialize, Queryable, Clone, PartialEq, Debug)]
 #[diesel(table_name = self::schema::files)]
 pub struct File {
     pub id: String,
     pub name: String,
-    pub mtime: i64,
-    pub sz: i32,
-    pub data: Vec<u8>,
-    pub keyring: Option<Keyring>,
+    pub mtime: Option<i64>,
+    pub sz: Option<i32>,
+    pub data: Option<Vec<u8>>,
+    pub keyring: Option<i32>,
+}
+
+#[derive(Queryable, Clone, PartialEq, Debug)]
+#[diesel(table_name = self::schema::files)]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    pub keyring: Keyring,
+}
+
+#[derive(Serialize, Queryable, Clone, Debug)]
+#[diesel(table_name = self::schema::files)]
+pub struct FileWithoutData {
+    pub id: String,
+    pub name: String,
+    pub keyring_id: Option<i32>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct FileWithoutDataWithKeyring {
+    pub id: String,
+    pub name: String,
+    pub keyring: Option<KeyringWithKeysAndFiles>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct KeyWithFile {
+    pub file: FileWithoutDataWithKeyring,
+    pub key: Vec<u8>,
+    pub keyring_id: i32,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct KeyringWithKeysAndFiles {
+    pub id: i32,
+    pub keys: Vec<KeyWithFile>
 }

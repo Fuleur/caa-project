@@ -32,6 +32,7 @@ pub fn authenticated_router(state: AppState) -> Router<AppState> {
             "/auth/change_password/finish",
             post(auth::change_password_finish),
         )
+        .route("/keyring_tree", get(files::get_tree))
         .route("/file/upload", post(files::upload_file))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
