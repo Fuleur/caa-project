@@ -4,7 +4,7 @@ use axum::{
     extract::{Request, State},
     middleware::Next,
     response::Response,
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
 };
 use diesel::prelude::*;
@@ -32,8 +32,12 @@ pub fn authenticated_router(state: AppState) -> Router<AppState> {
             "/auth/change_password/finish",
             post(auth::change_password_finish),
         )
+        .route("/pubkey/:user", get(auth::get_user_public_key))
         .route("/keyring_tree", get(files::get_tree))
         .route("/file/upload", post(files::upload_file))
+        .route("/file/download", get(files::download_file))
+        .route("/file/delete", delete(files::delete_file))
+        .route("/file/share", post(files::share_file))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

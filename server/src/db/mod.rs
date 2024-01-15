@@ -31,7 +31,7 @@ pub struct Session {
     pub expiration_date: i64,
 }
 
-#[derive(Queryable, Selectable, Serialize, Deserialize, Associations, Clone, PartialEq, Debug)]
+#[derive(Insertable, Queryable, Selectable, Serialize, Deserialize, Associations, Clone, PartialEq, Debug)]
 #[diesel(belongs_to(Keyring, foreign_key = keyring_id))]
 #[diesel(table_name = self::schema::keys)]
 pub struct Key {

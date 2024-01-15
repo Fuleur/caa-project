@@ -1,4 +1,5 @@
 use argon2::Argon2;
+use axum::extract::Path;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use base64::{engine::general_purpose, Engine as _};
 use colored::Colorize;
@@ -329,7 +330,7 @@ pub async fn login_finish(
 
     let keyring_with_keys = KeyringWithKeys {
         id: user.keyring.id,
-        keys: user_keys
+        keys: user_keys,
     };
 
     Json(LoginRequestResult {
@@ -471,4 +472,33 @@ pub async fn change_password_finish(
     .unwrap();
 
     StatusCode::OK
+}
+
+/// Request the public key of a given user
+pub async fn get_user_public_key(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+    Path(user): Path<String>,
+) -> Result<Json<Vec<u8>>, StatusCode> {
+    let conn = app_state.pool.get().await.unwrap();
+
+    let user_pubkey = conn
+        .interact(|conn| {
+            users::table
+                .find(user)
+                .select(users::pub_key)
+                .first::<Vec<u8>>(conn)
+        })
+        .await
+        .unwrap();
+
+    if let Ok(pubkey) = user_pubkey {
+        Ok(Json(pubkey))
+    } else {
+        // Not good, might give informations about existing users
+        // (We can check on existings user through register though...)
+        // Need to send a dummy pubkey generated from the requested user name 
+        // (every request with the same user must send the same pubkey)
+        Err(StatusCode::NOT_FOUND)
+    }
 }

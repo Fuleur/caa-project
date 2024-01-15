@@ -11,16 +11,21 @@ use crate::{
     db::{
         schema::{files, keyrings, keys, users},
         File, FileWithoutData, FileWithoutDataWithKeyring, Folder, Key, KeyWithFile, Keyring,
-        KeyringWithKeys, KeyringWithKeysAndFiles, NewFile, NewKey, Session,
+        KeyringWithKeys, KeyringWithKeysAndFiles, NewFile, NewKey, Session, User,
     },
     AppState,
 };
 
 #[derive(Deserialize)]
 pub struct UploadFileRequest {
+    /// The parent folder to put the file in.
+    /// None = root
     parent_uid: Option<String>,
+    /// Encrypted filename
     filename: String,
+    /// Encrypted file content
     file: Vec<u8>,
+    /// Encrypted symmetric key with user pubkey
     encrypted_key: Vec<u8>,
 }
 
@@ -147,6 +152,13 @@ pub async fn upload_file(
     }))
 }
 
+/// Allow a user to create a folder at a given location
+/// 
+/// Folders are basically a File but without data and with a Keyring
+pub async fn create_folder() -> StatusCode {
+    todo!()
+}
+
 #[derive(Deserialize)]
 pub struct DownloadFileRequest {
     file_uid: String,
@@ -207,21 +219,144 @@ pub async fn download_file(
     Ok(Json(file))
 }
 
+#[derive(Deserialize)]
+pub struct DeleteFileRequest {
+    file_uid: String,
+}
+
 /// Allow a user to delete a file
-pub async fn delete_file() {
-    todo!()
+pub async fn delete_file(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+    Json(delete_request): Json<DeleteFileRequest>,
+) -> StatusCode {
+    let conn = app_state.pool.get().await.unwrap();
+
+    // Get user keyring informations
+    let user_keyring_id: i32 = conn
+        .interact(|conn| {
+            users::table
+                .find(user_session.user)
+                .select(users::keyring)
+                .first::<i32>(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let user_keyring: Keyring = conn
+        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Check if aser has access to the file
+    if !has_access(
+        &user_keyring,
+        delete_request.file_uid.clone(),
+        &mut conn.lock().unwrap(),
+    ) {
+        return StatusCode::FORBIDDEN;
+    }
+
+    // Delete file
+    // TODO: Proper folder deletion
+    // Currently, if file is a folder, we lost access to all files and folders inside it, no problem
+    // but files and folders remains in the database, but nobody can access them anymore as the link to them is broken
+    conn.interact(move |conn| {
+        conn.transaction(|conn| {
+            // Delete all keys to this file
+            diesel::delete(keys::table.filter(keys::target.eq(&delete_request.file_uid)))
+                .execute(conn)?;
+            // Delete file
+            diesel::delete(files::table.find(&delete_request.file_uid)).execute(conn)?;
+
+            diesel::result::QueryResult::Ok(())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    StatusCode::OK
+}
+
+#[derive(Deserialize)]
+pub struct ShareFileRequest {
+    /// File to share
+    file_uid: String,
+    /// Symmetric key of the file, encrypted with target_user public key
+    encrypted_key: Vec<u8>,
+    /// The user to share the file with
+    target_user: String,
 }
 
 /// Allow a use to share a file with another user
 ///
 /// Receive the file key encrypted with the destination user public key from the client
-/// push this key in the destination user root keychain.
+/// push this key in the destination user root keyring.
 ///
 /// If it's a file, then the destination user will have access to this file from his root.
 /// If it's a folder, then the destination user will have access to this folder
 /// and all subsequent files/folder from his root.
-pub async fn share_file() {
-    todo!()
+pub async fn share_file(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+    Json(share_request): Json<ShareFileRequest>,
+) -> StatusCode {
+    let conn = app_state.pool.get().await.unwrap();
+
+    // Get user keyring informations
+    let user_keyring_id: i32 = conn
+        .interact(|conn| {
+            users::table
+                .find(user_session.user)
+                .select(users::keyring)
+                .first::<i32>(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let user_keyring: Keyring = conn
+        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Check if aser has access to the file
+    if !has_access(
+        &user_keyring,
+        share_request.file_uid.clone(),
+        &mut conn.lock().unwrap(),
+    ) {
+        return StatusCode::FORBIDDEN;
+    }
+
+    conn.interact(move |conn| {
+        conn.transaction(|conn| {
+            // Get target_user keyring id
+            let target_user: User = users::table
+                .find(share_request.target_user)
+                .first::<User>(conn)?;
+
+            // Add shared key to the target_user keyring
+            diesel::insert_into(keys::table)
+                .values(Key {
+                    target: share_request.file_uid,
+                    key: share_request.encrypted_key,
+                    keyring_id: target_user.keyring,
+                })
+                .execute(conn)?;
+
+            diesel::result::QueryResult::Ok(())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    StatusCode::OK
 }
 
 /// Check if a user has access to a given file or folder
@@ -240,14 +375,15 @@ fn has_access(
             return true;
         }
 
-        let folder: Folder = files::table
+        let folder = files::table
             .find(key.target)
             .inner_join(keyrings::table)
             .select((files::id, files::name, (keyrings::all_columns)))
-            .first::<Folder>(conn.as_mut())
-            .unwrap();
+            .first::<Folder>(conn.as_mut());
 
-        return has_access(&folder.keyring, file_uuid, conn);
+        if let Ok(folder) = folder {
+            return has_access(&folder.keyring, file_uuid, conn);
+        }
     }
 
     false
