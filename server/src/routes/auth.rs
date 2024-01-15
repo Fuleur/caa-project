@@ -16,9 +16,14 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::db::schema::{keyrings, keys, sessions, users};
-use crate::db::{Key, Keyring, KeyringWithKeys, NewKeyring, Session, User, UserWithKeyring};
+use crate::db::{
+    Key, Keyring, KeyringWithKeys, KeyringWithKeysAndFiles, NewKeyring, Session, User,
+    UserWithKeyring,
+};
 use crate::log;
 use crate::AppState;
+
+use super::files::get_user_tree;
 
 pub struct DefaultCS;
 impl CipherSuite for DefaultCS {
@@ -229,10 +234,10 @@ pub struct LoginRequestFinish {
     credential_finalization: CredentialFinalization<DefaultCS>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct LoginRequestResult {
     keypair: (Vec<u8>, Vec<u8>),
-    keyring: KeyringWithKeys,
+    keyring_tree: KeyringWithKeysAndFiles,
 }
 
 /// OPAQUE Login Finish
@@ -318,24 +323,11 @@ pub async fn login_finish(
         .unwrap()
         .unwrap();
 
-    let user_keys: Vec<Key> = conn
-        .interact(move |conn| {
-            keys::table
-                .filter(keys::keyring_id.eq(user.keyring.id))
-                .load::<Key>(conn)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let keyring_with_keys = KeyringWithKeys {
-        id: user.keyring.id,
-        keys: user_keys,
-    };
+    let user_keyring_tree = get_user_tree(user.username, app_state.pool).await.unwrap();
 
     Json(LoginRequestResult {
         keypair: (user.pub_key, user.priv_key),
-        keyring: keyring_with_keys,
+        keyring_tree: user_keyring_tree,
     })
 }
 
@@ -497,7 +489,7 @@ pub async fn get_user_public_key(
     } else {
         // Not good, might give informations about existing users
         // (We can check on existings user through register though...)
-        // Need to send a dummy pubkey generated from the requested user name 
+        // Need to send a dummy pubkey generated from the requested user name
         // (every request with the same user must send the same pubkey)
         Err(StatusCode::NOT_FOUND)
     }

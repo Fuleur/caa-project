@@ -9,7 +9,11 @@ use rsa::{pkcs1::DecodeRsaPublicKey, rand_core::OsRng, sha2::Sha256, Oaep, RsaPu
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
-use crate::{log, models::KeyringWithKeys, TSFSContext};
+use crate::{
+    log,
+    models::{KeyringWithKeys, KeyringWithKeysAndFiles},
+    TSFSContext, crypto,
+};
 
 use super::Command;
 
@@ -24,15 +28,20 @@ pub struct UploadFileArgs {
 
 #[derive(Serialize)]
 pub struct UploadFileRequest {
-    path: String,
+    /// The parent folder to put the file in.
+    /// None = root
+    parent_uid: Option<String>,
+    /// Encrypted filename
     filename: String,
+    /// Encrypted file content
     file: Vec<u8>,
+    /// Encrypted symmetric key with user pubkey
     encrypted_key: Vec<u8>,
 }
 
 #[derive(Deserialize)]
 pub struct UploadFileResponse {
-    keyring: KeyringWithKeys,
+    keyring_tree: KeyringWithKeysAndFiles,
 }
 
 impl Command for UploadFileCommand {
@@ -72,14 +81,16 @@ impl Command for UploadFileCommand {
                     let filename_ciphertext = [nonce.to_vec(), encrypted_filename].concat();
                     let filename_base64 = BASE64_STANDARD.encode(filename_ciphertext);
 
-                    // Encrypt file key with user public key
-                    let rsa_public_key =
-                        RsaPublicKey::from_pkcs1_der(ctx.public_key.as_ref().unwrap()).unwrap();
-                    let padding = Oaep::new::<Sha256>();
+                    let encrypted_key;
+                    if let Some(current_folder) = ctx.current_folder.last() {
+                        let current_folder = ctx.keyring_tree.as_ref().unwrap().get_file(&current_folder).unwrap();
 
-                    let encrypted_key = rsa_public_key
-                        .encrypt(&mut rng, padding, &file_key)
-                        .unwrap();
+                        let key = current_folder.key;
+                        encrypted_key = crypto::chacha_encrypt(&file_key, &key).unwrap();
+                    } else {
+                        // Encrypt file key with user public key
+                        encrypted_key = crypto::rsa_encrypt(&file_key, ctx.public_key.as_ref().unwrap()).unwrap();
+                    }
 
                     let client = reqwest::blocking::Client::builder()
                         .danger_accept_invalid_certs(ctx.accept_invalid_cert)
@@ -96,7 +107,7 @@ impl Command for UploadFileCommand {
                             format!("Bearer {}", ctx.session_token.as_ref().unwrap()),
                         )
                         .json(&UploadFileRequest {
-                            path: args.local_path,
+                            parent_uid: ctx.current_folder.last().cloned(),
                             filename: filename_base64,
                             file: file_content_ciphertext,
                             encrypted_key,
@@ -108,7 +119,7 @@ impl Command for UploadFileCommand {
                                 log::info("File upload success !");
 
                                 let upload_result = res.json::<UploadFileResponse>().unwrap();
-                                ctx.keyring = Some(upload_result.keyring);
+                                ctx.keyring_tree = Some(upload_result.keyring_tree);
                             }
 
                             Err(e) => {

@@ -1,14 +1,16 @@
 use crate::{
     commands::{
-        change_password::ChangePasswordCommand, exit::ExitCommand, help::HelpCommand,
-        login::LoginCommand, logout::LogoutCommand, ping::PingCommand, register::RegisterCommand,
-        sessions::SessionsCommand, set::SetCommand, Command, upload_file::UploadFileCommand,
+        cd::CdCommand, change_password::ChangePasswordCommand, exit::ExitCommand,
+        help::HelpCommand, login::LoginCommand, logout::LogoutCommand, ls::LsCommand,
+        mkdir::MkdirCommand, ping::PingCommand, register::RegisterCommand,
+        sessions::SessionsCommand, set::SetCommand, upload_file::UploadFileCommand, Command,
     },
     models::KeyringWithKeys,
 };
 use argon2::Argon2;
 use colored::Colorize;
 use lazy_static::lazy_static;
+use models::KeyringWithKeysAndFiles;
 use opaque_ke::CipherSuite;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +19,8 @@ use std::{
 };
 
 mod commands;
+mod crypto;
+mod files;
 mod log;
 mod models;
 
@@ -33,8 +37,10 @@ lazy_static! {
         map.insert("register", Box::new(RegisterCommand));
         map.insert("sessions", Box::new(SessionsCommand));
         map.insert("change-password", Box::new(ChangePasswordCommand));
+        map.insert("ls", Box::new(LsCommand));
+        map.insert("cd", Box::new(CdCommand));
+        map.insert("mkdir", Box::new(MkdirCommand));
         map.insert("upload", Box::new(UploadFileCommand));
-
 
         map
     };
@@ -69,7 +75,8 @@ fn main() {
         private_key: None,
         public_key: None,
         accept_invalid_cert: cfg.accept_invalid_cert,
-        keyring: None,
+        keyring_tree: None,
+        current_folder: Vec::new(),
     };
 
     if ctx.endpoint_url.is_none() {
@@ -82,13 +89,29 @@ fn main() {
             "[TSFS]".cyan(),
             if ctx.session_token.is_some() {
                 format!(
-                    "{}@{} ",
+                    "{}@{}{} ",
                     ctx.username.as_ref().unwrap().green(),
-                    ctx.endpoint_url.as_ref().unwrap().cyan()
+                    ctx.endpoint_url
+                        .as_ref()
+                        .unwrap()
+                        .split("//")
+                        .nth(1)
+                        .unwrap()
+                        .cyan(),
+                    ctx.get_path().cyan(),
                 )
             } else {
                 if ctx.endpoint_url.is_some() {
-                    format!("{} ", ctx.endpoint_url.as_ref().unwrap().red())
+                    format!(
+                        "{} ",
+                        ctx.endpoint_url
+                            .as_ref()
+                            .unwrap()
+                            .split("//")
+                            .nth(1)
+                            .unwrap()
+                            .red(),
+                    )
                 } else {
                     "".to_string()
                 }
@@ -117,14 +140,45 @@ fn main() {
 /// Others are altered trough the program execution
 #[derive(Clone, Debug)]
 pub struct TSFSContext {
+    /// Endpoint of the Server
     endpoint_url: Option<String>,
+    /// Port used by the Server
     endpoint_port: u32,
+    /// Username of current logged user
     username: Option<String>,
+    /// Session token of the current Session
     session_token: Option<String>,
+    /// Private key of the logged user
     private_key: Option<Vec<u8>>,
+    /// Public key of the logged user
     public_key: Option<Vec<u8>>,
+    /// Wheter or not to accept invalid certificates (like self-signed)
+    /// Might be required on dev
     accept_invalid_cert: bool,
-    keyring: Option<KeyringWithKeys>,
+    /// The current Keyring Tree of the logged user
+    keyring_tree: Option<KeyringWithKeysAndFiles>,
+    /// The current location in the Tree
+    current_folder: Vec<String>,
+}
+
+impl TSFSContext {
+    pub fn get_path(&self) -> String {
+        let mut path = "/".to_string();
+
+        for folder in &self.current_folder {
+            path += &self
+                .keyring_tree
+                .as_ref()
+                .unwrap()
+                .get_file(folder)
+                .unwrap()
+                .file
+                .name;
+            path += "/";
+        }
+
+        path
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

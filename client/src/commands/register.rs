@@ -1,10 +1,7 @@
 use std::io::{self, Write};
 
 use base64::{engine::general_purpose, Engine};
-use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit},
-    ChaCha20Poly1305, Key,
-};
+use chacha20poly1305::Key;
 use colored::Colorize;
 use opaque_ke::{
     ClientRegistration, ClientRegistrationFinishParameters, Identifiers, RegistrationRequest,
@@ -12,10 +9,13 @@ use opaque_ke::{
 };
 use rand::rngs::OsRng;
 use reqwest::StatusCode;
-use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey, pkcs1::{EncodeRsaPublicKey, EncodeRsaPrivateKey}};
+use rsa::{
+    pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey},
+    RsaPrivateKey, RsaPublicKey,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{log, DefaultCS, TSFSContext};
+use crate::{crypto, log, DefaultCS, TSFSContext};
 
 use super::Command;
 
@@ -120,20 +120,17 @@ impl Command for RegisterCommand {
                     // Generate Keypair for User Keychain
                     log::info("Generating RSA Keypair...");
                     let mut rng = OsRng;
-                    let priv_key = RsaPrivateKey::new(&mut rng, 3072).expect("failed to generate a key");
+                    let priv_key =
+                        RsaPrivateKey::new(&mut rng, 3072).expect("failed to generate a key");
                     let pub_key = RsaPublicKey::from(&priv_key);
 
                     log::info("Encrypting private key...");
 
                     // Need to shrink the 64 bytes Export Key to 32 bytes
                     let key = Key::from_slice(&export_key[..32]);
-                    let cipher = ChaCha20Poly1305::new(&key);
-                    let nonce = ChaCha20Poly1305::generate_nonce(&mut rng);
-
                     let encrypted_private_key =
-                        cipher.encrypt(&nonce, priv_key.to_pkcs1_der().unwrap().as_bytes()).unwrap();
-                    // Concat the nonce with the ciphertext
-                    let private_key_cipher = [nonce.to_vec(), encrypted_private_key].concat();
+                        crypto::chacha_encrypt(priv_key.to_pkcs1_der().unwrap().as_bytes(), key)
+                            .unwrap();
 
                     log::info("Sending RegistrationFinish to Server...");
 
@@ -146,7 +143,10 @@ impl Command for RegisterCommand {
                         .json(&RegisterFinishRequest {
                             username,
                             registration_upload: client_registration_finish_result.message,
-                            user_keypair: (pub_key.to_pkcs1_der().unwrap().to_vec(), private_key_cipher),
+                            user_keypair: (
+                                pub_key.to_pkcs1_der().unwrap().to_vec(),
+                                encrypted_private_key,
+                            ),
                         })
                         .send()
                     {
@@ -183,10 +183,7 @@ impl Command for RegisterCommand {
                     if status == StatusCode::CONFLICT {
                         log::error("An account is already registered with this username :/");
                     } else {
-                        log::error(&format!(
-                            "Error on register: {}",
-                            e.to_string().red()
-                        ));
+                        log::error(&format!("Error on register: {}", e.to_string().red()));
                     }
                 }
             }

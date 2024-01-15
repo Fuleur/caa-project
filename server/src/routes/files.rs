@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{extract::State, Extension, Json};
-use deadpool_diesel::SyncGuard;
+use deadpool_diesel::{sqlite::Pool, SyncGuard};
 use diesel::prelude::*;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use crate::{
     db::{
         schema::{files, keyrings, keys, users},
         File, FileWithoutData, FileWithoutDataWithKeyring, Folder, Key, KeyWithFile, Keyring,
-        KeyringWithKeys, KeyringWithKeysAndFiles, NewFile, NewKey, Session, User,
+        KeyringWithKeys, KeyringWithKeysAndFiles, NewFile, NewKey, NewKeyring, Session, User,
     },
     AppState,
 };
@@ -31,7 +31,7 @@ pub struct UploadFileRequest {
 
 #[derive(Serialize)]
 pub struct UploadFileResponse {
-    keyring: KeyringWithKeys,
+    keyring_tree: KeyringWithKeysAndFiles,
 }
 
 /// Allow a user to upload a file.
@@ -51,11 +51,14 @@ pub async fn upload_file(
 
     // Get user keyring informations
     let user_keyring_id: i32 = conn
-        .interact(|conn| {
-            users::table
-                .find(user_session.user)
-                .select(users::keyring)
-                .first::<i32>(conn)
+        .interact({
+            let user = user_session.user.clone();
+            move |conn| {
+                users::table
+                    .find(user)
+                    .select(users::keyring)
+                    .first::<i32>(conn)
+            }
         })
         .await
         .unwrap()
@@ -132,6 +135,137 @@ pub async fn upload_file(
     .unwrap()
     .unwrap();
 
+    let user_keyring_tree = get_user_tree(user_session.user, app_state.pool)
+        .await
+        .unwrap();
+
+    Ok(Json(UploadFileResponse {
+        keyring_tree: user_keyring_tree,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct CreateFolderRequest {
+    /// The parent folder to put the file in.
+    /// None = root
+    parent_uid: Option<String>,
+    /// Encrypted filename
+    filename: String,
+    /// Encrypted symmetric key with user pubkey
+    encrypted_key: Vec<u8>,
+}
+
+#[derive(Serialize)]
+pub struct CreateFolderResponse {
+    keyring: KeyringWithKeys,
+}
+
+/// Allow a user to create a folder at a given location
+///
+/// Folders are basically a File but without data and with a Keyring
+pub async fn create_folder(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+    Json(create_folder_request): Json<CreateFolderRequest>,
+) -> Result<Json<CreateFolderResponse>, StatusCode> {
+    let conn = app_state.pool.get().await.unwrap();
+
+    // Get user keyring informations
+    let user_keyring_id: i32 = conn
+        .interact(|conn| {
+            users::table
+                .find(user_session.user)
+                .select(users::keyring)
+                .first::<i32>(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let user_keyring: Keyring = conn
+        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Check if user has access to parent folder
+    if let Some(parent_uid) = create_folder_request.parent_uid.clone() {
+        if !has_access(&user_keyring, parent_uid, &mut conn.lock().unwrap()) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    };
+
+    // Create folder keyring
+    let folder_keyring: Keyring = conn
+        .interact(|conn| {
+            diesel::insert_into(keyrings::table)
+                .values(NewKeyring { id: None })
+                .get_result(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Create new folder
+    let file = File {
+        id: Uuid::new_v4().to_string(),
+        name: create_folder_request.filename,
+        mtime: Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
+        ),
+        sz: None,
+        data: None,
+        keyring_id: Some(folder_keyring.id),
+    };
+
+    // Insert new file in DB
+    conn.interact({
+        let file = file.clone();
+        |conn| diesel::insert_into(files::table).values(file).execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Get parent folder keyring
+    let parent_keyring = if let Some(parent_uid) = create_folder_request.parent_uid {
+        let parent_folder: Folder = conn
+            .interact(move |conn| {
+                files::table
+                    .find(parent_uid)
+                    .inner_join(keyrings::table)
+                    .select((files::id, files::name, (keyrings::all_columns)))
+                    .first::<Folder>(conn)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        parent_folder.keyring
+    } else {
+        user_keyring
+    };
+
+    // Update keyring
+    conn.interact({
+        let file_id = file.id.clone();
+        move |conn| {
+            diesel::insert_into(keys::table)
+                .values(NewKey {
+                    target: file_id,
+                    key: create_folder_request.encrypted_key,
+                    keyring_id: parent_keyring.id,
+                })
+                .execute(conn)
+        }
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
     let user_keys: Vec<Key> = conn
         .interact(move |conn| {
             keys::table
@@ -147,16 +281,9 @@ pub async fn upload_file(
         keys: user_keys,
     };
 
-    Ok(Json(UploadFileResponse {
+    Ok(Json(CreateFolderResponse {
         keyring: keyring_with_keys,
     }))
-}
-
-/// Allow a user to create a folder at a given location
-/// 
-/// Folders are basically a File but without data and with a Keyring
-pub async fn create_folder() -> StatusCode {
-    todo!()
 }
 
 #[derive(Deserialize)]
@@ -394,13 +521,21 @@ pub async fn get_tree(
     Extension(user_session): Extension<Session>,
     State(app_state): State<AppState>,
 ) -> Json<KeyringWithKeysAndFiles> {
-    let conn = app_state.pool.get().await.unwrap();
+    Json(
+        get_user_tree(user_session.user, app_state.pool)
+            .await
+            .unwrap(),
+    )
+}
+
+pub async fn get_user_tree(user: String, pool: Pool) -> Option<KeyringWithKeysAndFiles> {
+    let conn = pool.get().await.unwrap();
 
     // Get user keyring informations
     let user_keyring_id: i32 = conn
         .interact(|conn| {
             users::table
-                .find(user_session.user)
+                .find(user)
                 .select(users::keyring)
                 .first::<i32>(conn)
         })
@@ -408,18 +543,21 @@ pub async fn get_tree(
         .unwrap()
         .unwrap();
 
-    let user_keyring: Keyring = conn
+    let user_keyring = conn
         .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
         .await
-        .unwrap()
         .unwrap();
 
-    let keyring_files = get_files_in_keyring(&user_keyring, &mut conn.lock().unwrap());
+    if let Ok(keyring) = user_keyring {
+        let keyring_files = get_files_in_keyring(&keyring, &mut conn.lock().unwrap());
 
-    Json(KeyringWithKeysAndFiles {
-        id: user_keyring.id,
-        keys: keyring_files,
-    })
+        Some(KeyringWithKeysAndFiles {
+            id: keyring.id,
+            keys: keyring_files,
+        })
+    } else {
+        None
+    }
 }
 
 fn get_files_in_keyring(

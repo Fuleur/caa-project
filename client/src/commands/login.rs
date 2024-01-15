@@ -1,10 +1,7 @@
 use std::io::{self, Write};
 
 use base64::{engine::general_purpose, Engine as _};
-use chacha20poly1305::{
-    aead::{Aead, KeyInit},
-    ChaCha20Poly1305, Key, Nonce,
-};
+use chacha20poly1305::Key;
 use colored::Colorize;
 use opaque_ke::{
     ClientLogin, ClientLoginFinishParameters, CredentialFinalization, CredentialRequest,
@@ -13,7 +10,7 @@ use opaque_ke::{
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
-use crate::{log, models::KeyringWithKeys, DefaultCS, TSFSContext};
+use crate::{crypto, log, models::KeyringWithKeysAndFiles, DefaultCS, TSFSContext};
 
 use super::Command;
 
@@ -34,8 +31,7 @@ pub struct LoginRequestFinish {
 #[derive(Deserialize, Debug)]
 pub struct LoginRequestResult {
     keypair: (Vec<u8>, Vec<u8>),
-    keyring: KeyringWithKeys,
-
+    keyring_tree: KeyringWithKeysAndFiles,
 }
 
 impl Command for LoginCommand {
@@ -132,19 +128,12 @@ impl Command for LoginCommand {
                     // This key will be used as Master Key
                     // See https://docs.rs/opaque-ke/latest/opaque_ke/#export-key for more informations
                     let export_key = client_login_finish_result.export_key;
-                    log::debug(&format!(
-                        "Export Key: {}",
-                        general_purpose::STANDARD_NO_PAD.encode(export_key)
-                    ));
 
                     // Decrypt private key
                     // Need to shrink the 64 bytes Export Key to 32 bytes
+                    log::info("Decrypting Private Key...");
                     let key = Key::from_slice(&export_key[..32]);
-                    let cipher = ChaCha20Poly1305::new(&key);
-                    // Get nonce from ciphertext (first 12 bytes)
-                    let nonce = Nonce::from_slice(&user_keypair.1[..12]);
-                    let ciphertext = &user_keypair.1[12..];
-                    let private_key = match cipher.decrypt(nonce, ciphertext) {
+                    let private_key = match crypto::chacha_decrypt(&user_keypair.1, key) {
                         Ok(k) => k,
 
                         Err(_) => {
@@ -155,10 +144,16 @@ impl Command for LoginCommand {
                         }
                     };
 
+                    // Decrypt keyring
+                    log::info("Decrypting Keyring...");
+                    let decrypted_keyring = KeyringWithKeysAndFiles::from_encrypted(login_result.keyring_tree, private_key.as_slice(), true);
+
+                    decrypted_keyring.get_file("hihi");
+
                     // Update Context with keys
                     ctx.private_key = Some(private_key);
                     ctx.public_key = Some(user_keypair.0);
-                    ctx.keyring = Some(login_result.keyring);
+                    ctx.keyring_tree = Some(decrypted_keyring);
 
                     // Here is our Session Key that will be used as Session Token
                     let b64_token = general_purpose::STANDARD_NO_PAD
@@ -171,7 +166,6 @@ impl Command for LoginCommand {
                         "OK".bright_green(),
                         username.bright_green()
                     ));
-                    log::debug(&format!("Session Token: {}", b64_token));
                 }
 
                 Err(e) => {

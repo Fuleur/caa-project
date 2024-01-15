@@ -79,7 +79,7 @@ pub struct NewFile {
     pub keyring_id: Option<i32>,
 }
 
-#[derive(Serialize, Queryable, Clone, PartialEq, Debug)]
+#[derive(Serialize, Insertable, Queryable, Clone, PartialEq, Debug)]
 #[diesel(table_name = self::schema::files)]
 pub struct File {
     pub id: String,
@@ -87,7 +87,7 @@ pub struct File {
     pub mtime: Option<i64>,
     pub sz: Option<i32>,
     pub data: Option<Vec<u8>>,
-    pub keyring: Option<i32>,
+    pub keyring_id: Option<i32>,
 }
 
 #[derive(Queryable, Clone, PartialEq, Debug)]

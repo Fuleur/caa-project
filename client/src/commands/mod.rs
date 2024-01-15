@@ -1,10 +1,13 @@
 use crate::TSFSContext;
 
+pub mod cd;
 pub mod change_password;
 pub mod exit;
 pub mod help;
 pub mod login;
 pub mod logout;
+pub mod ls;
+pub mod mkdir;
 pub mod ping;
 pub mod register;
 pub mod sessions;
