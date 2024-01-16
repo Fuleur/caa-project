@@ -5,17 +5,13 @@ use chacha20poly1305::{
 };
 use clap::Parser;
 use colored::Colorize;
-use rsa::{pkcs1::DecodeRsaPublicKey, rand_core::OsRng, sha2::Sha256, Oaep, RsaPublicKey};
-use serde::{Deserialize, Serialize};
+use rsa::rand_core::OsRng;
+use serde::Serialize;
 use std::{fs, path::Path};
 
-use crate::{
-    log,
-    models::{KeyringWithKeys, KeyringWithKeysAndFiles},
-    TSFSContext, crypto,
-};
+use crate::{crypto, log, TSFSContext};
 
-use super::Command;
+use super::{update_keyring, Command};
 
 pub struct UploadFileCommand;
 
@@ -23,7 +19,6 @@ pub struct UploadFileCommand;
 #[derive(Parser, Debug)]
 pub struct UploadFileArgs {
     local_path: String,
-    remote_path: String,
 }
 
 #[derive(Serialize)]
@@ -37,11 +32,6 @@ pub struct UploadFileRequest {
     file: Vec<u8>,
     /// Encrypted symmetric key with user pubkey
     encrypted_key: Vec<u8>,
-}
-
-#[derive(Deserialize)]
-pub struct UploadFileResponse {
-    keyring_tree: KeyringWithKeysAndFiles,
 }
 
 impl Command for UploadFileCommand {
@@ -83,13 +73,20 @@ impl Command for UploadFileCommand {
 
                     let encrypted_key;
                     if let Some(current_folder) = ctx.current_folder.last() {
-                        let current_folder = ctx.keyring_tree.as_ref().unwrap().get_file(&current_folder).unwrap();
+                        let current_folder = ctx
+                            .keyring_tree
+                            .as_ref()
+                            .unwrap()
+                            .get_file(&current_folder)
+                            .unwrap();
 
                         let key = current_folder.key;
                         encrypted_key = crypto::chacha_encrypt(&file_key, &key).unwrap();
                     } else {
                         // Encrypt file key with user public key
-                        encrypted_key = crypto::rsa_encrypt(&file_key, ctx.public_key.as_ref().unwrap()).unwrap();
+                        encrypted_key =
+                            crypto::rsa_encrypt(&file_key, ctx.public_key.as_ref().unwrap())
+                                .unwrap();
                     }
 
                     let client = reqwest::blocking::Client::builder()
@@ -115,11 +112,10 @@ impl Command for UploadFileCommand {
                         .send()
                     {
                         Ok(res) => match res.error_for_status() {
-                            Ok(res) => {
+                            Ok(_res) => {
                                 log::info("File upload success !");
 
-                                let upload_result = res.json::<UploadFileResponse>().unwrap();
-                                ctx.keyring_tree = Some(upload_result.keyring_tree);
+                                update_keyring(ctx);
                             }
 
                             Err(e) => {

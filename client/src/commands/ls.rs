@@ -1,8 +1,9 @@
-use base64::prelude::*;
+use std::time::SystemTime;
+
 use clap::Parser;
 use colored::Colorize;
 
-use crate::{log, models::FileWithoutDataWithKeyring, TSFSContext};
+use crate::{commands::update_keyring, log, TSFSContext};
 
 use super::Command;
 
@@ -17,10 +18,21 @@ pub struct LsCommand;
 impl Command for LsCommand {
     fn execute(&self, args: &Vec<String>, ctx: &mut TSFSContext) {
         match LsArgs::try_parse_from(args) {
-            Ok(args) => {
-                if let Some(keyring_tree) = &ctx.keyring_tree {
-                    // TODO: Request new Keyring Tree to the Server
+            Ok(_args) => {
+                // As requesting the whole keyring is costly and as the only changes server side
+                // is when someone share a file with us, we don't need to update the keyring
+                // every time.
+                let current_time = SystemTime::now();
+                if current_time
+                    .duration_since(ctx.last_keyring_update)
+                    .unwrap()
+                    .as_secs()
+                    > 10
+                {
+                    update_keyring(ctx);
+                }
 
+                if let Some(keyring_tree) = &ctx.keyring_tree {
                     let mut current_folder = None;
                     if let Some(current_folder_id) = &ctx.current_folder.last() {
                         current_folder = keyring_tree.get_file(current_folder_id);

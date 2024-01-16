@@ -1,11 +1,8 @@
-use crate::{
-    commands::{
-        cd::CdCommand, change_password::ChangePasswordCommand, exit::ExitCommand,
-        help::HelpCommand, login::LoginCommand, logout::LogoutCommand, ls::LsCommand,
-        mkdir::MkdirCommand, ping::PingCommand, register::RegisterCommand,
-        sessions::SessionsCommand, set::SetCommand, upload_file::UploadFileCommand, Command,
-    },
-    models::KeyringWithKeys,
+use crate::commands::{
+    cd::CdCommand, change_password::ChangePasswordCommand, exit::ExitCommand, help::HelpCommand,
+    login::LoginCommand, logout::LogoutCommand, ls::LsCommand, mkdir::MkdirCommand,
+    ping::PingCommand, register::RegisterCommand, sessions::SessionsCommand, set::SetCommand,
+    upload_file::UploadFileCommand, Command, rm::RmCommand, share::ShareCommand,
 };
 use argon2::Argon2;
 use colored::Colorize;
@@ -16,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{self, Write},
+    time::SystemTime,
 };
 
 mod commands;
@@ -41,6 +39,8 @@ lazy_static! {
         map.insert("cd", Box::new(CdCommand));
         map.insert("mkdir", Box::new(MkdirCommand));
         map.insert("upload", Box::new(UploadFileCommand));
+        map.insert("rm", Box::new(RmCommand));
+        map.insert("share", Box::new(ShareCommand));
 
         map
     };
@@ -77,6 +77,7 @@ fn main() {
         accept_invalid_cert: cfg.accept_invalid_cert,
         keyring_tree: None,
         current_folder: Vec::new(),
+        last_keyring_update: SystemTime::now(),
     };
 
     if ctx.endpoint_url.is_none() {
@@ -159,6 +160,8 @@ pub struct TSFSContext {
     keyring_tree: Option<KeyringWithKeysAndFiles>,
     /// The current location in the Tree
     current_folder: Vec<String>,
+    /// Time of the last keyring update
+    last_keyring_update: SystemTime,
 }
 
 impl TSFSContext {

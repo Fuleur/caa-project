@@ -29,11 +29,6 @@ pub struct UploadFileRequest {
     encrypted_key: Vec<u8>,
 }
 
-#[derive(Serialize)]
-pub struct UploadFileResponse {
-    keyring_tree: KeyringWithKeysAndFiles,
-}
-
 /// Allow a user to upload a file.
 ///
 /// The file uploaded is encrypted and his encrypted symmetric encryption key
@@ -46,7 +41,7 @@ pub async fn upload_file(
     Extension(user_session): Extension<Session>,
     State(app_state): State<AppState>,
     Json(upload_request): Json<UploadFileRequest>,
-) -> Result<Json<UploadFileResponse>, StatusCode> {
+) -> StatusCode {
     let conn = app_state.pool.get().await.unwrap();
 
     // Get user keyring informations
@@ -73,7 +68,7 @@ pub async fn upload_file(
     // Check if user has access to parent folder
     if let Some(parent_uid) = upload_request.parent_uid.clone() {
         if !has_access(&user_keyring, parent_uid, &mut conn.lock().unwrap()) {
-            return Err(StatusCode::FORBIDDEN);
+            return StatusCode::FORBIDDEN;
         }
     };
 
@@ -135,13 +130,7 @@ pub async fn upload_file(
     .unwrap()
     .unwrap();
 
-    let user_keyring_tree = get_user_tree(user_session.user, app_state.pool)
-        .await
-        .unwrap();
-
-    Ok(Json(UploadFileResponse {
-        keyring_tree: user_keyring_tree,
-    }))
+    StatusCode::OK
 }
 
 #[derive(Deserialize)]
@@ -469,7 +458,7 @@ pub async fn share_file(
 
             // Add shared key to the target_user keyring
             diesel::insert_into(keys::table)
-                .values(Key {
+                .values(NewKey {
                     target: share_request.file_uid,
                     key: share_request.encrypted_key,
                     keyring_id: target_user.keyring,
@@ -509,7 +498,9 @@ fn has_access(
             .first::<Folder>(conn.as_mut());
 
         if let Ok(folder) = folder {
-            return has_access(&folder.keyring, file_uuid, conn);
+            if has_access(&folder.keyring, file_uuid.clone(), conn) {
+                return true;
+            }
         }
     }
 

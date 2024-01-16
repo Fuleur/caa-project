@@ -35,6 +35,7 @@ pub struct Session {
 #[diesel(belongs_to(Keyring, foreign_key = keyring_id))]
 #[diesel(table_name = self::schema::keys)]
 pub struct Key {
+    pub id: i32,
     pub target: String,
     pub key: Vec<u8>,
     pub keyring_id: i32,

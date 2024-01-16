@@ -1,8 +1,6 @@
-use base64::prelude::*;
 use clap::Parser;
-use colored::Colorize;
 
-use crate::{log, models::FileWithoutDataWithKeyring, TSFSContext};
+use crate::{log, TSFSContext};
 
 use super::Command;
 

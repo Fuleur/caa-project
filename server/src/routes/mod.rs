@@ -33,7 +33,7 @@ pub fn authenticated_router(state: AppState) -> Router<AppState> {
             post(auth::change_password_finish),
         )
         .route("/pubkey/:user", get(auth::get_user_public_key))
-        .route("/keyring_tree", get(files::get_tree))
+        .route("/keyring", get(files::get_tree))
         .route("/file/upload", post(files::upload_file))
         .route("/file/download", get(files::download_file))
         .route("/file/delete", delete(files::delete_file))

@@ -1,17 +1,15 @@
 use base64::prelude::*;
 use chacha20poly1305::{
-    aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
-    ChaCha20Poly1305, ChaChaPoly1305, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    ChaCha20Poly1305,
 };
 use clap::Parser;
 use colored::Colorize;
-use rsa::{pkcs1::DecodeRsaPublicKey, pkcs8::der::Encode, sha2::Sha256, Oaep, RsaPublicKey};
 use serde::Serialize;
-use std::io::Read;
 
-use crate::{crypto, log, models::FileWithoutDataWithKeyring, TSFSContext};
+use crate::{crypto, log, TSFSContext};
 
-use super::Command;
+use super::{update_keyring, Command};
 
 #[derive(Serialize)]
 pub struct CreateFolderRequest {
@@ -37,8 +35,6 @@ impl Command for MkdirCommand {
         match MkdirArgs::try_parse_from(args) {
             Ok(args) => {
                 if let Some(keyring_tree) = &ctx.keyring_tree {
-                    // TODO: Request new Keyring Tree to the Server
-
                     log::info("Creating new folder...");
 
                     let mut current_folder = None;
@@ -94,6 +90,8 @@ impl Command for MkdirCommand {
                         Ok(res) => match res.error_for_status() {
                             Ok(_) => {
                                 log::info("Folder created !");
+
+                                update_keyring(ctx);
                             }
 
                             Err(e) => {
@@ -122,6 +120,6 @@ impl Command for MkdirCommand {
     }
 
     fn description(&self) -> String {
-        "List the content of the current folder".into()
+        "Create a folder at the current location".into()
     }
 }

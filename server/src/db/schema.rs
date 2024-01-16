@@ -18,7 +18,8 @@ diesel::table! {
 }
 
 diesel::table! {
-    keys (target) {
+    keys (id) {
+        id -> Integer,
         target -> Text,
         key -> Binary,
         keyring_id -> Integer,
