@@ -1,15 +1,10 @@
-use base64::prelude::*;
-use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    ChaCha20Poly1305,
-};
 use clap::Parser;
 use colored::Colorize;
 use serde::Serialize;
 
 use crate::{crypto, log, TSFSContext};
 
-use super::{update_keyring, Command};
+use super::Command;
 
 #[derive(Serialize)]
 pub struct ShareFileRequest {
@@ -21,7 +16,7 @@ pub struct ShareFileRequest {
     target_user: String,
 }
 
-/// List the content of the current folder
+/// Share a file
 #[derive(Parser, Debug)]
 pub struct ShareArgs {
     filename: String,

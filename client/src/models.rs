@@ -19,6 +19,27 @@ pub struct KeyringWithKeys {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+pub struct File {
+    pub id: String,
+    pub name: String,
+    pub mtime: Option<i64>,
+    pub sz: Option<i32>,
+    pub data: Option<Vec<u8>>,
+    pub keyring_id: Option<i32>,
+}
+
+impl File {
+    pub fn decrypt(&mut self, key: &[u8]) {
+        let raw_name = BASE64_STANDARD.decode(&self.name).unwrap();
+        self.name = String::from_utf8(crypto::chacha_decrypt(&raw_name, key).unwrap()).unwrap();
+
+        if self.data.is_some() {
+            self.data = crypto::chacha_decrypt(self.data.as_ref().unwrap(), key).ok();
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Debug)]
 pub struct FileWithoutDataWithKeyring {
     pub id: String,
     pub name: String,
@@ -95,7 +116,7 @@ impl KeyringWithKeysAndFiles {
     /// Find a file with the given UUID
     pub fn get_file(&self, folder_uuid: &str) -> Option<KeyWithFile> {
         for key in &self.keys {
-            if key.file.id == folder_uuid.to_string(){
+            if key.file.id == folder_uuid.to_string() {
                 return Some(key.clone());
             }
 

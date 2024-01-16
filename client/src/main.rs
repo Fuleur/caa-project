@@ -1,8 +1,9 @@
 use crate::commands::{
-    cd::CdCommand, change_password::ChangePasswordCommand, exit::ExitCommand, help::HelpCommand,
-    login::LoginCommand, logout::LogoutCommand, ls::LsCommand, mkdir::MkdirCommand,
-    ping::PingCommand, register::RegisterCommand, sessions::SessionsCommand, set::SetCommand,
-    upload_file::UploadFileCommand, Command, rm::RmCommand, share::ShareCommand,
+    cd::CdCommand, change_password::ChangePasswordCommand, download::DownloadCommand,
+    exit::ExitCommand, help::HelpCommand, login::LoginCommand, logout::LogoutCommand,
+    ls::LsCommand, mkdir::MkdirCommand, ping::PingCommand, register::RegisterCommand,
+    rm::RmCommand, sessions::SessionsCommand, set::SetCommand, share::ShareCommand,
+    unshare::UnshareCommand, upload_file::UploadFileCommand, Command,
 };
 use argon2::Argon2;
 use colored::Colorize;
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{self, Write},
+    path::PathBuf,
     time::SystemTime,
 };
 
@@ -41,6 +43,8 @@ lazy_static! {
         map.insert("upload", Box::new(UploadFileCommand));
         map.insert("rm", Box::new(RmCommand));
         map.insert("share", Box::new(ShareCommand));
+        map.insert("download", Box::new(DownloadCommand));
+        map.insert("unshare", Box::new(UnshareCommand));
 
         map
     };
@@ -78,10 +82,76 @@ fn main() {
         keyring_tree: None,
         current_folder: Vec::new(),
         last_keyring_update: SystemTime::now(),
+        local_folder: cfg.local_folder,
     };
 
+    if ctx.local_folder.is_none() {
+        log::warning("No local_folder configured");
+        loop {
+            print!("At which location do whish to download files ?: ");
+            io::stdout().flush().unwrap();
+
+            let mut local_folder = String::new();
+            io::stdin().read_line(&mut local_folder).unwrap();
+            local_folder = local_folder.trim().to_string();
+
+            let path = PathBuf::from(local_folder);
+            if path.is_dir() {
+                ctx.local_folder = Some(path.to_str().unwrap().to_string());
+                confy::store(
+                    "tsfs_cli",
+                    "settings",
+                    Config {
+                        endpoint_url: ctx.endpoint_url.clone(),
+                        endpoint_port: ctx.endpoint_port,
+                        accept_invalid_cert: ctx.accept_invalid_cert,
+                        local_folder: ctx.local_folder.clone(),
+                    },
+                )
+                .unwrap();
+                break;
+            } else {
+                log::error("Not a folder or path doesn't exists");
+            }
+        }
+    }
+
     if ctx.endpoint_url.is_none() {
-        log::warning("endpoint_url not defined in context");
+        log::warning("No endpoint_url configured");
+        // Ask for server endpoint
+        print!("Endpoint URL: ");
+        io::stdout().flush().unwrap();
+
+        let mut endpoint = String::new();
+        io::stdin().read_line(&mut endpoint).unwrap();
+        endpoint = endpoint.trim().to_string();
+        ctx.endpoint_url = Some(endpoint);
+
+        // Ask for server port
+        print!("Endpoint port: ");
+        io::stdout().flush().unwrap();
+
+        let port: u32;
+        loop {
+            let mut port_line = String::new();
+            io::stdin().read_line(&mut port_line).unwrap();
+            if let Ok(p) = port_line.trim().parse::<u32>() {
+                port = p;
+                break;
+            }
+        }
+        ctx.endpoint_port = port;
+        confy::store(
+            "tsfs_cli",
+            "settings",
+            Config {
+                endpoint_url: ctx.endpoint_url.clone(),
+                endpoint_port: ctx.endpoint_port,
+                accept_invalid_cert: ctx.accept_invalid_cert,
+                local_folder: ctx.local_folder.clone(),
+            },
+        )
+        .unwrap();
     }
 
     loop {
@@ -162,6 +232,8 @@ pub struct TSFSContext {
     current_folder: Vec<String>,
     /// Time of the last keyring update
     last_keyring_update: SystemTime,
+    /// The location of the local root folder
+    local_folder: Option<String>,
 }
 
 impl TSFSContext {
@@ -189,6 +261,7 @@ pub struct Config {
     endpoint_url: Option<String>,
     endpoint_port: u32,
     accept_invalid_cert: bool,
+    local_folder: Option<String>,
 }
 
 impl Default for Config {
@@ -197,6 +270,7 @@ impl Default for Config {
             endpoint_url: None,
             endpoint_port: 8935,
             accept_invalid_cert: false,
+            local_folder: None,
         }
     }
 }

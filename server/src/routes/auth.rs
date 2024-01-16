@@ -15,11 +15,8 @@ use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::db::schema::{keyrings, keys, sessions, users};
-use crate::db::{
-    Key, Keyring, KeyringWithKeys, KeyringWithKeysAndFiles, NewKeyring, Session, User,
-    UserWithKeyring,
-};
+use crate::db::schema::{keyrings, sessions, users};
+use crate::db::{KeyringWithKeysAndFiles, NewKeyring, Session, User, UserWithKeyring};
 use crate::log;
 use crate::AppState;
 
@@ -277,9 +274,8 @@ pub async fn login_finish(
     let b64_token = general_purpose::STANDARD_NO_PAD.encode(server_login_finish_result.session_key);
 
     log::debug(&format!(
-        "Login successfull for {} ! Token: {}",
-        login_request.username.cyan(),
-        b64_token
+        "Login successfull for {} !",
+        login_request.username.cyan()
     ));
 
     let conn = app_state.pool.get().await.unwrap();
@@ -311,7 +307,6 @@ pub async fn login_finish(
                 .inner_join(keyrings::table)
                 .select((
                     users::username,
-                    users::password,
                     users::pub_key,
                     users::priv_key,
                     (keyrings::all_columns),
@@ -468,7 +463,7 @@ pub async fn change_password_finish(
 
 /// Request the public key of a given user
 pub async fn get_user_public_key(
-    Extension(user_session): Extension<Session>,
+    Extension(_user_session): Extension<Session>,
     State(app_state): State<AppState>,
     Path(user): Path<String>,
 ) -> Result<Json<Vec<u8>>, StatusCode> {

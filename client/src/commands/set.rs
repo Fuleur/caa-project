@@ -72,6 +72,7 @@ impl Command for SetCommand {
                         endpoint_url: ctx.endpoint_url.clone(),
                         endpoint_port: ctx.endpoint_port,
                         accept_invalid_cert: ctx.accept_invalid_cert,
+                        local_folder: ctx.local_folder.clone(),
                     },
                 )
                 .unwrap();

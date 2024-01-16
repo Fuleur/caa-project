@@ -1,6 +1,5 @@
 use std::io::{self, Write};
 
-use base64::{engine::general_purpose, Engine};
 use chacha20poly1305::Key;
 use colored::Colorize;
 use opaque_ke::{
@@ -112,13 +111,10 @@ impl Command for RegisterCommand {
                     // This key will be used as Master Key
                     // See https://docs.rs/opaque-ke/latest/opaque_ke/#export-key for more informations
                     let export_key = client_registration_finish_result.export_key;
-                    log::debug(&format!(
-                        "Export Key: {}",
-                        general_purpose::STANDARD_NO_PAD.encode(export_key)
-                    ));
 
                     // Generate Keypair for User Keychain
                     log::info("Generating RSA Keypair...");
+                    log::debug("This might take a while in debug builds");
                     let mut rng = OsRng;
                     let priv_key =
                         RsaPrivateKey::new(&mut rng, 3072).expect("failed to generate a key");

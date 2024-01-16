@@ -12,6 +12,7 @@ use crate::{
         schema::{files, keyrings, keys, users},
         File, FileWithoutData, FileWithoutDataWithKeyring, Folder, Key, KeyWithFile, Keyring,
         KeyringWithKeys, KeyringWithKeysAndFiles, NewFile, NewKey, NewKeyring, Session, User,
+        UserWithKeyring,
     },
     AppState,
 };
@@ -25,7 +26,7 @@ pub struct UploadFileRequest {
     filename: String,
     /// Encrypted file content
     file: Vec<u8>,
-    /// Encrypted symmetric key with user pubkey
+    /// Symmetric key of the file, encrypted with parent key
     encrypted_key: Vec<u8>,
 }
 
@@ -45,54 +46,29 @@ pub async fn upload_file(
     let conn = app_state.pool.get().await.unwrap();
 
     // Get user keyring informations
-    let user_keyring_id: i32 = conn
-        .interact({
-            let user = user_session.user.clone();
-            move |conn| {
-                users::table
-                    .find(user)
-                    .select(users::keyring)
-                    .first::<i32>(conn)
-            }
+    let user: UserWithKeyring = conn
+        .interact(|conn| {
+            users::table
+                .find(user_session.user)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
         })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let user_keyring: Keyring = conn
-        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
         .await
         .unwrap()
         .unwrap();
 
     // Check if user has access to parent folder
     if let Some(parent_uid) = upload_request.parent_uid.clone() {
-        if !has_access(&user_keyring, parent_uid, &mut conn.lock().unwrap()) {
+        if !has_access(&user.keyring, parent_uid, &mut conn.lock().unwrap()) {
             return StatusCode::FORBIDDEN;
         }
     };
-
-    // Create new file
-    let file = NewFile {
-        id: Uuid::new_v4().to_string(),
-        name: upload_request.filename,
-        mtime: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64,
-        sz: upload_request.file.len() as i32,
-        data: upload_request.file,
-        keyring_id: None,
-    };
-
-    // Insert new file in DB
-    conn.interact({
-        let file = file.clone();
-        |conn| diesel::insert_into(files::table).values(file).execute(conn)
-    })
-    .await
-    .unwrap()
-    .unwrap();
 
     // Get parent folder keyring
     let parent_keyring = if let Some(parent_uid) = upload_request.parent_uid {
@@ -110,27 +86,86 @@ pub async fn upload_file(
 
         parent_folder.keyring
     } else {
-        user_keyring
+        user.keyring
     };
 
-    // Update keyring
-    conn.interact({
-        let file_id = file.id.clone();
-        move |conn| {
-            diesel::insert_into(keys::table)
-                .values(NewKey {
-                    target: file_id,
-                    key: upload_request.encrypted_key,
-                    keyring_id: parent_keyring.id,
-                })
-                .execute(conn)
-        }
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    // Check if file already exists
+    let file: Result<File, _> = conn
+        .interact({
+            let filename = upload_request.filename.clone();
+            |conn| {
+                keys::table
+                    .inner_join(files::table)
+                    .filter(files::name.eq(filename))
+                    .select(files::all_columns)
+                    .first::<File>(conn)
+            }
+        })
+        .await
+        .unwrap();
 
-    StatusCode::OK
+    if let Ok(file) = file {
+        // File exists, update it
+        conn.interact(|conn| {
+            diesel::update(files::table)
+                .filter(files::id.eq(file.id))
+                .set((
+                    files::sz.eq(upload_request.file.len() as i32),
+                    files::data.eq(upload_request.file),
+                    files::mtime.eq(SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64),
+                ))
+                .execute(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        StatusCode::OK
+    } else {
+        // File doesn't exists, create new file
+        let file = NewFile {
+            id: Uuid::new_v4().to_string(),
+            name: upload_request.filename,
+            mtime: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
+            sz: upload_request.file.len() as i32,
+            data: upload_request.file,
+            keyring_id: None,
+        };
+
+        // Insert new file in DB
+        conn.interact({
+            let file = file.clone();
+            |conn| diesel::insert_into(files::table).values(file).execute(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        // Update keyring
+        conn.interact({
+            let file_id = file.id.clone();
+            move |conn| {
+                diesel::insert_into(keys::table)
+                    .values(NewKey {
+                        target: file_id,
+                        key: upload_request.encrypted_key,
+                        keyring_id: parent_keyring.id,
+                    })
+                    .execute(conn)
+            }
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        StatusCode::CREATED
+    }
 }
 
 #[derive(Deserialize)]
@@ -160,26 +195,26 @@ pub async fn create_folder(
     let conn = app_state.pool.get().await.unwrap();
 
     // Get user keyring informations
-    let user_keyring_id: i32 = conn
+    let user: UserWithKeyring = conn
         .interact(|conn| {
             users::table
                 .find(user_session.user)
-                .select(users::keyring)
-                .first::<i32>(conn)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
         })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let user_keyring: Keyring = conn
-        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
         .await
         .unwrap()
         .unwrap();
 
     // Check if user has access to parent folder
     if let Some(parent_uid) = create_folder_request.parent_uid.clone() {
-        if !has_access(&user_keyring, parent_uid, &mut conn.lock().unwrap()) {
+        if !has_access(&user.keyring, parent_uid, &mut conn.lock().unwrap()) {
             return Err(StatusCode::FORBIDDEN);
         }
     };
@@ -235,7 +270,7 @@ pub async fn create_folder(
 
         parent_folder.keyring
     } else {
-        user_keyring
+        user.keyring.clone()
     };
 
     // Update keyring
@@ -258,7 +293,7 @@ pub async fn create_folder(
     let user_keys: Vec<Key> = conn
         .interact(move |conn| {
             keys::table
-                .filter(keys::keyring_id.eq(user_keyring_id))
+                .filter(keys::keyring_id.eq(user.keyring.id))
                 .load::<Key>(conn)
         })
         .await
@@ -266,7 +301,7 @@ pub async fn create_folder(
         .unwrap();
 
     let keyring_with_keys = KeyringWithKeys {
-        id: user_keyring_id,
+        id: user.keyring.id,
         keys: user_keys,
     };
 
@@ -296,26 +331,26 @@ pub async fn download_file(
     let conn = app_state.pool.get().await.unwrap();
 
     // Get user keyring informations
-    let user_keyring_id: i32 = conn
+    let user: UserWithKeyring = conn
         .interact(|conn| {
             users::table
                 .find(user_session.user)
-                .select(users::keyring)
-                .first::<i32>(conn)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
         })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let user_keyring: Keyring = conn
-        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
         .await
         .unwrap()
         .unwrap();
 
     // Check if aser has access to the file
     if !has_access(
-        &user_keyring,
+        &user.keyring,
         download_request.file_uid.clone(),
         &mut conn.lock().unwrap(),
     ) {
@@ -349,26 +384,26 @@ pub async fn delete_file(
     let conn = app_state.pool.get().await.unwrap();
 
     // Get user keyring informations
-    let user_keyring_id: i32 = conn
+    let user: UserWithKeyring = conn
         .interact(|conn| {
             users::table
                 .find(user_session.user)
-                .select(users::keyring)
-                .first::<i32>(conn)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
         })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let user_keyring: Keyring = conn
-        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
         .await
         .unwrap()
         .unwrap();
 
     // Check if aser has access to the file
     if !has_access(
-        &user_keyring,
+        &user.keyring,
         delete_request.file_uid.clone(),
         &mut conn.lock().unwrap(),
     ) {
@@ -423,26 +458,26 @@ pub async fn share_file(
     let conn = app_state.pool.get().await.unwrap();
 
     // Get user keyring informations
-    let user_keyring_id: i32 = conn
+    let user: UserWithKeyring = conn
         .interact(|conn| {
             users::table
                 .find(user_session.user)
-                .select(users::keyring)
-                .first::<i32>(conn)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
         })
-        .await
-        .unwrap()
-        .unwrap();
-
-    let user_keyring: Keyring = conn
-        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
         .await
         .unwrap()
         .unwrap();
 
     // Check if aser has access to the file
     if !has_access(
-        &user_keyring,
+        &user.keyring,
         share_request.file_uid.clone(),
         &mut conn.lock().unwrap(),
     ) {
@@ -467,6 +502,140 @@ pub async fn share_file(
 
             diesel::result::QueryResult::Ok(())
         })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    StatusCode::OK
+}
+
+#[derive(Deserialize)]
+pub struct RevokeShareFileRequest {
+    /// File to revoke
+    file_uid: String,
+    /// A file can have multiple parents depending of sharing status
+    /// We need to know the parent the file must remain in
+    /// If user indicate a different parent on which he have also access
+    /// This will move the file with this current implementation
+    parent_uid: Option<String>,
+    /// New Symmetric key of the file, encrypted with parent
+    encrypted_key: Vec<u8>,
+    /// New encrypted filename
+    filename: String,
+    /// New encrypted file content
+    file: Option<Vec<u8>>,
+}
+
+/// Allow a user to revoke a share to a file he has access to
+///
+/// Note: This method is unfinished and there is flaws when revoking folders
+pub async fn unshare_file(
+    Extension(user_session): Extension<Session>,
+    State(app_state): State<AppState>,
+    Json(revoke_share_request): Json<RevokeShareFileRequest>,
+) -> StatusCode {
+    let conn = app_state.pool.get().await.unwrap();
+
+    // Get user keyring informations
+    let user: UserWithKeyring = conn
+        .interact(|conn| {
+            users::table
+                .find(user_session.user)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Check if aser has access to the file
+    if !has_access(
+        &user.keyring,
+        revoke_share_request.file_uid.clone(),
+        &mut conn.lock().unwrap(),
+    ) {
+        return StatusCode::FORBIDDEN;
+    }
+
+    // Check if user has access to parent folder
+    if let Some(parent_uid) = revoke_share_request.parent_uid.clone() {
+        if !has_access(&user.keyring, parent_uid, &mut conn.lock().unwrap()) {
+            return StatusCode::FORBIDDEN;
+        }
+    };
+
+    // Remove all occurence of the key
+    conn.interact({
+        let file_uid = revoke_share_request.file_uid.clone();
+        |conn| diesel::delete(keys::table.filter(keys::target.eq(file_uid))).execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Get parent folder keyring
+    let parent_keyring = if let Some(parent_uid) = revoke_share_request.parent_uid {
+        let parent_folder: Folder = conn
+            .interact(move |conn| {
+                files::table
+                    .find(parent_uid)
+                    .inner_join(keyrings::table)
+                    .select((files::id, files::name, (keyrings::all_columns)))
+                    .first::<Folder>(conn)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        parent_folder.keyring
+    } else {
+        user.keyring
+    };
+
+    // Add new key
+    conn.interact({
+        let file_uid = revoke_share_request.file_uid.clone();
+        move |conn| {
+            diesel::insert_into(keys::table)
+                .values(NewKey {
+                    target: file_uid,
+                    key: revoke_share_request.encrypted_key,
+                    keyring_id: parent_keyring.id,
+                })
+                .execute(conn)
+        }
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    // Update file data
+    let file_size = if revoke_share_request.file.is_some() {
+        revoke_share_request.file.as_ref().unwrap().len() as i32
+    } else {
+        0
+    };
+
+    conn.interact(move |conn| {
+        diesel::update(files::table)
+            .filter(files::id.eq(revoke_share_request.file_uid))
+            .set((
+                files::name.eq(revoke_share_request.filename),
+                files::sz.eq(file_size),
+                files::data.eq(revoke_share_request.file),
+                files::mtime.eq(SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64),
+            ))
+            .execute(conn)
     })
     .await
     .unwrap()
@@ -523,27 +692,27 @@ pub async fn get_user_tree(user: String, pool: Pool) -> Option<KeyringWithKeysAn
     let conn = pool.get().await.unwrap();
 
     // Get user keyring informations
-    let user_keyring_id: i32 = conn
+    let user: Result<UserWithKeyring, _> = conn
         .interact(|conn| {
             users::table
                 .find(user)
-                .select(users::keyring)
-                .first::<i32>(conn)
+                .inner_join(keyrings::table)
+                .select((
+                    users::username,
+                    users::pub_key,
+                    users::priv_key,
+                    (keyrings::all_columns),
+                ))
+                .first::<UserWithKeyring>(conn)
         })
         .await
-        .unwrap()
         .unwrap();
 
-    let user_keyring = conn
-        .interact(move |conn| keyrings::table.find(user_keyring_id).first::<Keyring>(conn))
-        .await
-        .unwrap();
-
-    if let Ok(keyring) = user_keyring {
-        let keyring_files = get_files_in_keyring(&keyring, &mut conn.lock().unwrap());
+    if let Ok(user) = user {
+        let keyring_files = get_files_in_keyring(&user.keyring, &mut conn.lock().unwrap());
 
         Some(KeyringWithKeysAndFiles {
-            id: keyring.id,
+            id: user.keyring.id,
             keys: keyring_files,
         })
     } else {

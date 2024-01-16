@@ -38,6 +38,7 @@ pub fn authenticated_router(state: AppState) -> Router<AppState> {
         .route("/file/download", get(files::download_file))
         .route("/file/delete", delete(files::delete_file))
         .route("/file/share", post(files::share_file))
+        .route("/file/unshare", post(files::unshare_file))
         .route("/folder/create", post(files::create_folder))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
